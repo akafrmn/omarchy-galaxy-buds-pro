@@ -234,6 +234,17 @@ def looks_like_earbuds(uuids, name):
     return profile_for(uuids, name) is not UNKNOWN_PROFILE
 
 
+def pick_device(candidates):
+    """With two pairs paired -- a Buds+ in a drawer and a Buds2 Pro in your
+    ears -- the connected one is the one being asked about."""
+    for path, device in candidates:
+        if device.get("Connected", False):
+            return path, device
+    # Nothing connected: still return one so the panel can say which pair it
+    # is waiting for rather than claiming nothing is paired.
+    return candidates[0] if candidates else (None, None)
+
+
 def parse_touch(byte, shape):
     if shape == "byte":
         # One flag, and it reads the other way around: non-zero means locked.
@@ -358,6 +369,7 @@ class Daemon:
         import dbus
         manager = dbus.Interface(bus.get_object("org.bluez", "/"),
                                  "org.freedesktop.DBus.ObjectManager")
+        candidates = []
         for path, interfaces in manager.GetManagedObjects().items():
             device = interfaces.get("org.bluez.Device1")
             if not device:
@@ -369,8 +381,8 @@ class Daemon:
                     continue
             elif not looks_like_earbuds(uuids, name):
                 continue
-            return str(path), device
-        return None, None
+            candidates.append((str(path), device))
+        return pick_device(candidates)
 
     def connect(self):
         """Retry tick: always returns True so the GLib timer stays alive."""
@@ -398,6 +410,10 @@ class Daemon:
             if not self.registered:
                 return True
 
+        if path != self.device_path:
+            # Different earbuds: drop the previous pair's battery, mode and
+            # toggles instead of showing them under the new name.
+            self.state = {"connected": False, "reason": self.state.get("reason", "")}
         self.device_path = path
         self.state["model"] = profile["name"]
         self.state["modes"] = list(profile["modes"])

@@ -121,6 +121,16 @@ def test_older_models_are_matched_by_name():
     assert gb.profile_for([gb.SPP_NEW], "Buds3 Pro (0A0A)")["name"] == "buds3pro"
 
 
+def test_connected_pair_wins_when_two_are_paired():
+    idle = ("/org/bluez/hci0/dev_A", {"Connected": False, "Alias": "Galaxy Buds+ (194D)"})
+    live = ("/org/bluez/hci0/dev_B", {"Connected": True, "Alias": "Buds2 Pro"})
+    assert gb.pick_device([idle, live])[0] == "/org/bluez/hci0/dev_B"
+    assert gb.pick_device([live, idle])[0] == "/org/bluez/hci0/dev_B"
+    # None connected: still name one, so the panel can say what it waits for.
+    assert gb.pick_device([idle])[0] == "/org/bluez/hci0/dev_A"
+    assert gb.pick_device([]) == (None, None)
+
+
 def test_plain_spp_devices_are_not_mistaken_for_earbuds():
     assert gb.looks_like_earbuds([gb.SPP_STANDARD], "Keychron K6 Pro") is False
     assert gb.looks_like_earbuds([gb.SPP_STANDARD], "Galaxy Buds+ (1A2B)") is True
