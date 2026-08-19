@@ -1,0 +1,448 @@
+#!/usr/bin/python3
+"""Galaxy Buds noise-control daemon for the Omarchy shell.
+
+Speaks Samsung's SPP protocol over an RFCOMM socket that BlueZ hands us through
+the Profile1 API, the same path GalaxyBudsClient takes on Linux. Reads commands
+as JSON lines on stdin, writes the earbud state as JSON lines on stdout.
+
+Only one process can hold the SPP link, so opening the GalaxyBudsClient GUI
+while this runs will take the connection away from one of the two.
+
+Needs the system python: dbus-python and PyGObject live there, not in brew's.
+"""
+
+import json
+import os
+import struct
+import sys
+
+DEBUG = bool(os.environ.get("GALAXY_BUDS_DEBUG"))
+
+SPP_UUID = "2e73a4ad-332d-41fc-90e2-16bef06523f2"
+# The device id is the tail of this vendor UUID; the device name is useless
+# because earbuds can be renamed.
+DEVICE_ID_UUID_PREFIX = "d908aab5-7a90-4cbe-8641-86a553db"
+
+SOM = 0xFD
+EOM = 0xDD
+
+MSG_ACK = 66
+MSG_STATUS = 96
+MSG_EXTENDED_STATUS = 97
+MSG_NOISE_CONTROLS_UPDATE = 119
+MSG_NOISE_CONTROLS = 120
+MSG_SET_SPATIAL_AUDIO = 124
+MSG_LOCK_TOUCHPAD = 144
+MSG_SET_SEAMLESS_CONNECTION = 175
+
+MODES = {"off": 0, "anc": 1, "ambient": 2, "adaptive": 3}
+MODE_NAMES = {v: k for k, v in MODES.items()}
+
+# Everything else in the protocol is shared across models. Only these three
+# things actually diverge, so a new model is an entry here, not a new script.
+# spatial_offset is where 360 Audio sits in the extended status payload;
+# lock is the touchpad message shape; modes are the noise modes the model has.
+PROFILES = {
+    "buds2pro": {"ids": range(325, 329), "spatial_offset": 35,
+                 "modes": ("off", "anc", "ambient"), "lock": "bits7"},
+    "budspro": {"ids": range(298, 302), "spatial_offset": 28,
+                "modes": ("off", "anc", "ambient"), "lock": "byte"},
+    "buds2": {"ids": range(313, 322), "spatial_offset": 35,
+              "modes": ("off", "anc", "ambient"), "lock": "bits7"},
+    "buds3": {"ids": (333, 334), "spatial_offset": 35,
+              "modes": ("off", "anc", "ambient", "adaptive"), "lock": "bits7"},
+    "buds3pro": {"ids": (340, 341), "spatial_offset": 35,
+                 "modes": ("off", "anc", "ambient", "adaptive"), "lock": "bits7"},
+}
+# Unknown model: noise control and battery still work, 360 Audio is hidden
+# rather than reading a byte that means something else on that firmware.
+UNKNOWN_PROFILE = {"ids": (), "spatial_offset": None,
+                   "modes": ("off", "anc", "ambient"), "lock": "bits7"}
+
+
+def _crc_table():
+    table = []
+    for i in range(256):
+        value = i << 8
+        for _ in range(8):
+            value = ((value << 1) ^ 0x1021) & 0xFFFF if value & 0x8000 else (value << 1) & 0xFFFF
+        table.append(value)
+    return table
+
+
+CRC_TABLE = _crc_table()
+
+
+def crc16(data):
+    """CRC16-CCITT/XModem over msgId + payload."""
+    crc = 0
+    for byte in data:
+        crc = ((crc << 8) ^ CRC_TABLE[((crc >> 8) ^ byte) & 0xFF]) & 0xFFFF
+    return crc
+
+
+def encode(msg_id, payload=b""):
+    payload = bytes(payload)
+    size = 1 + len(payload) + 2
+    body = bytes([msg_id]) + payload
+    return (bytes([SOM]) + struct.pack("<H", size) + body
+            + struct.pack("<H", crc16(body)) + bytes([EOM]))
+
+
+def decode(buffer):
+    """Pull whole frames out of buffer; returns (messages, leftover bytes)."""
+    messages = []
+    while True:
+        start = buffer.find(bytes([SOM]))
+        if start < 0:
+            return messages, b""
+        buffer = buffer[start:]
+        if len(buffer) < 6:
+            return messages, buffer
+        size = struct.unpack("<H", buffer[1:3])[0] & 0x3FF
+        total = 3 + size + 1
+        if size < 3:
+            buffer = buffer[1:]
+            continue
+        if len(buffer) < total:
+            # Wait for the rest. A stray 0xFD claiming a big size would stall
+            # here until enough bytes arrive, but an SPP stream stays framed:
+            # we only ever start reading at a real frame boundary.
+            return messages, buffer
+        frame, rest = buffer[:total], buffer[total:]
+        body = frame[3:3 + size - 2]
+        crc = struct.unpack("<H", frame[total - 3:total - 1])[0]
+        # A bad frame means we locked onto a 0xFD that was really payload, so
+        # skip one byte and resynchronise rather than dropping the whole buffer.
+        if frame[-1] != EOM or crc16(body) != crc:
+            buffer = buffer[1:]
+            continue
+        messages.append((body[0], body[1:]))
+        buffer = rest
+
+
+def profile_for_device_id(device_id):
+    for name, profile in PROFILES.items():
+        if device_id in profile["ids"]:
+            return name, profile
+    return "unknown", UNKNOWN_PROFILE
+
+
+def device_id_from_uuids(uuids):
+    for uuid in uuids:
+        uuid = str(uuid).lower()
+        if uuid.startswith(DEVICE_ID_UUID_PREFIX):
+            try:
+                return int(uuid[len(DEVICE_ID_UUID_PREFIX):], 16)
+            except ValueError:
+                return None
+    return None
+
+
+def parse_touch(byte):
+    return {
+        "enabled": bool(byte & 0x80),
+        "tap": bool(byte & 0x08),
+        "double": bool(byte & 0x04),
+        "triple": bool(byte & 0x02),
+        "hold": bool(byte & 0x01),
+        "double_call": bool(byte & 0x10),
+        "hold_call": bool(byte & 0x20),
+    }
+
+
+def parse_wearing(byte):
+    return {"left": byte >> 4, "right": byte & 0x0F}
+
+
+def parse_extended_status(payload, profile):
+    state = {
+        "revision": payload[0],
+        "battery": {"left": payload[2], "right": payload[3], "case": payload[7]},
+        "wearing": parse_wearing(payload[6]),
+        "noise": MODE_NAMES.get(payload[12], "unknown"),
+        "touch": parse_touch(payload[10]),
+        "seamless": payload[19] == 0,
+    }
+    offset = profile["spatial_offset"]
+    if offset is not None and len(payload) > offset:
+        state["spatial"] = payload[offset] == 1
+    return state
+
+
+def parse_status(payload):
+    charging = payload[7] if len(payload) > 7 else 0
+    return {
+        "battery": {"left": payload[1], "right": payload[2], "case": payload[6]},
+        "wearing": parse_wearing(payload[5]),
+        "charging": {"left": bool(charging & 0x10), "right": bool(charging & 0x04),
+                     "case": bool(charging & 0x01)},
+    }
+
+
+def lock_payload(shape, enabled, touch):
+    """Touch gestures on/off. Re-sends the gesture bits we last read so turning
+    the touchpad back on restores what was set, not a blank slate."""
+    if shape == "byte":
+        return bytes([0 if enabled else 1])
+    gestures = [touch.get(k, False) for k in ("tap", "double", "triple", "hold")]
+    if enabled and not any(gestures):
+        gestures = [True] * 4
+    return bytes([1 if enabled else 0] + [int(g) for g in gestures]
+                 + [int(touch.get("double_call", False)), int(touch.get("hold_call", False))])
+
+
+class Daemon:
+    def __init__(self, address=""):
+        self.address = address.upper()
+        self.state = {"connected": False, "model": "unknown", "modes": list(UNKNOWN_PROFILE["modes"])}
+        self.profile = UNKNOWN_PROFILE
+        self.socket = None
+        self.buffer = b""
+        self.device_path = None
+        self.connecting = False
+
+    # ---- output ----------------------------------------------------------
+    def emit(self):
+        sys.stdout.write(json.dumps(self.state) + "\n")
+        sys.stdout.flush()
+
+    def update(self, values):
+        self.state.update(values)
+        self.emit()
+
+    # ---- bluez -----------------------------------------------------------
+    def find_device(self, bus):
+        import dbus
+        manager = dbus.Interface(bus.get_object("org.bluez", "/"),
+                                 "org.freedesktop.DBus.ObjectManager")
+        for path, interfaces in manager.GetManagedObjects().items():
+            device = interfaces.get("org.bluez.Device1")
+            if not device:
+                continue
+            uuids = [str(u).lower() for u in device.get("UUIDs", [])]
+            if SPP_UUID not in uuids:
+                continue
+            if self.address and str(device.get("Address", "")).upper() != self.address:
+                continue
+            return str(path), device
+        return None, None
+
+    def connect(self):
+        """Retry tick: always returns True so the GLib timer stays alive."""
+        import dbus
+        if self.socket or self.connecting:
+            return True
+        bus = self.bus
+        path, device = self.find_device(bus)
+        if not path:
+            self.update({"connected": False, "reason": "not paired"})
+            return True
+        if not device.get("Connected", False):
+            # The earbuds are in the case or off: ConnectProfile here would try
+            # to wake the whole device, so wait for them to come back instead.
+            self.update({"connected": False, "reason": "device offline"})
+            return True
+
+        self.device_path = path
+        name, profile = profile_for_device_id(device_id_from_uuids(device.get("UUIDs", [])))
+        self.profile = profile
+        self.state["model"] = name
+        self.state["modes"] = list(profile["modes"])
+        self.state["name"] = str(device.get("Alias") or device.get("Name") or "")
+
+        # Must be async: BlueZ calls NewConnection back on us while this call is
+        # in flight, and a blocking call would sit on the reply until it times
+        # out without ever servicing that callback.
+        self.connecting = True
+        dbus.Interface(bus.get_object("org.bluez", path), "org.bluez.Device1").ConnectProfile(
+            SPP_UUID,
+            reply_handler=self.on_connect_reply,
+            error_handler=self.on_connect_error)
+        return True
+
+    def on_connect_reply(self):
+        self.connecting = False
+
+    def on_connect_error(self, error):
+        self.connecting = False
+        if "AlreadyConnected" in str(error) or self.socket:
+            return
+        self.update({"connected": False, "reason": "connect failed"})
+
+    def on_new_connection(self, fd):
+        import socket
+        from gi.repository import GLib
+        self.socket = socket.socket(fileno=fd)
+        self.buffer = b""
+        self.connecting = False
+        self.update({"connected": True, "reason": ""})
+        GLib.io_add_watch(self.socket.fileno(), GLib.PRIORITY_DEFAULT,
+                          GLib.IOCondition.IN | GLib.IOCondition.HUP | GLib.IOCondition.ERR,
+                          self.on_readable)
+
+    def disconnect(self):
+        if self.socket:
+            try:
+                self.socket.close()
+            except OSError:
+                pass
+        self.socket = None
+        self.buffer = b""
+        self.connecting = False
+        self.update({"connected": False, "reason": "disconnected"})
+
+    def on_readable(self, fd, condition):
+        from gi.repository import GLib
+        if condition & (GLib.IOCondition.HUP | GLib.IOCondition.ERR):
+            self.disconnect()
+            return False
+        try:
+            chunk = self.socket.recv(4096)
+        except OSError:
+            chunk = b""
+        if not chunk:
+            self.disconnect()
+            return False
+        messages, self.buffer = decode(self.buffer + chunk)
+        for msg_id, payload in messages:
+            self.handle(msg_id, payload)
+        return True
+
+    def handle(self, msg_id, payload):
+        if DEBUG:
+            print(f"<< {msg_id} {payload.hex(' ')}", file=sys.stderr, flush=True)
+        try:
+            if msg_id == MSG_EXTENDED_STATUS:
+                self.update(parse_extended_status(payload, self.profile))
+            elif msg_id == MSG_STATUS:
+                self.update(parse_status(payload))
+            elif msg_id == MSG_NOISE_CONTROLS_UPDATE:
+                self.update({"noise": MODE_NAMES.get(payload[0], "unknown")})
+            elif msg_id == MSG_ACK:
+                self.handle_ack(payload[0], payload[1:])
+        except IndexError:
+            # A short payload means this firmware lays the message out
+            # differently; keep the link rather than dying on one message.
+            pass
+
+    def handle_ack(self, acked, params):
+        """The earbuds answer our commands with an ack carrying the value they
+        actually applied, so the UI reflects the device rather than our guess."""
+        if not params:
+            return
+        if acked == MSG_NOISE_CONTROLS:
+            self.update({"noise": MODE_NAMES.get(params[0], "unknown")})
+        elif acked == MSG_SET_SPATIAL_AUDIO:
+            self.update({"spatial": params[0] == 1})
+        elif acked == MSG_SET_SEAMLESS_CONNECTION:
+            self.update({"seamless": params[0] == 0})
+        elif acked == MSG_LOCK_TOUCHPAD:
+            touch = dict(self.state.get("touch", {}))
+            touch["enabled"] = params[0] == 1
+            self.update({"touch": touch})
+
+    def send(self, msg_id, payload=b""):
+        if not self.socket:
+            return
+        if DEBUG:
+            print(f">> {msg_id} {bytes(payload).hex(' ')}", file=sys.stderr, flush=True)
+        try:
+            self.socket.sendall(encode(msg_id, payload))
+        except OSError:
+            self.disconnect()
+
+    # ---- commands --------------------------------------------------------
+    def command(self, line):
+        try:
+            request = json.loads(line)
+        except ValueError:
+            return
+        name = request.get("cmd")
+        value = request.get("value")
+
+        if name == "noise" and value in MODES:
+            self.send(MSG_NOISE_CONTROLS, bytes([MODES[value]]))
+        elif name == "cycle":
+            modes = self.state.get("modes") or list(UNKNOWN_PROFILE["modes"])
+            current = self.state.get("noise")
+            index = modes.index(current) + 1 if current in modes else 0
+            self.send(MSG_NOISE_CONTROLS, bytes([MODES[modes[index % len(modes)]]]))
+        elif name == "spatial":
+            self.send(MSG_SET_SPATIAL_AUDIO, bytes([1 if value else 0]))
+        elif name == "touch":
+            self.send(MSG_LOCK_TOUCHPAD,
+                      lock_payload(self.profile["lock"], bool(value), self.state.get("touch", {})))
+        elif name == "seamless":
+            # Inverted on the wire: 0 enables it.
+            self.send(MSG_SET_SEAMLESS_CONNECTION, bytes([0 if value else 1]))
+        elif name == "refresh":
+            self.emit()
+
+    def on_stdin(self, fd, condition):
+        line = sys.stdin.readline()
+        if not line:
+            self.loop.quit()
+            return False
+        self.command(line.strip())
+        return True
+
+    # ---- lifecycle -------------------------------------------------------
+    def run(self):
+        import dbus
+        import dbus.mainloop.glib
+        import dbus.service
+        from gi.repository import GLib
+
+        dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+        self.bus = dbus.SystemBus()
+        self.loop = GLib.MainLoop()
+        daemon = self
+
+        class BluezProfile(dbus.service.Object):
+            @dbus.service.method("org.bluez.Profile1", in_signature="", out_signature="")
+            def Release(self):
+                pass
+
+            @dbus.service.method("org.bluez.Profile1", in_signature="oha{sv}", out_signature="")
+            def NewConnection(self, path, fd, properties):
+                daemon.on_new_connection(fd.take())
+
+            @dbus.service.method("org.bluez.Profile1", in_signature="o", out_signature="")
+            def RequestDisconnection(self, path):
+                daemon.disconnect()
+
+        path = "/omarchy/galaxybuds"
+        BluezProfile(self.bus, path)
+        manager = dbus.Interface(self.bus.get_object("org.bluez", "/org/bluez"),
+                                 "org.bluez.ProfileManager1")
+        try:
+            manager.UnregisterProfile(path)
+        except dbus.DBusException:
+            pass
+        manager.RegisterProfile(path, SPP_UUID,
+                                {"Role": "client", "Service": SPP_UUID,
+                                 "Name": "omarchy-galaxy-buds"})
+
+        GLib.io_add_watch(sys.stdin.fileno(), GLib.PRIORITY_DEFAULT,
+                          GLib.IOCondition.IN | GLib.IOCondition.HUP, self.on_stdin)
+        self.connect()
+        GLib.timeout_add_seconds(5, self.connect)
+        self.loop.run()
+
+
+def main(argv):
+    if len(argv) > 1 and argv[1] in ("-h", "--help"):
+        print(__doc__.strip())
+        print("\nusage: galaxy-buds [serve] [--address AA:BB:CC:DD:EE:FF]")
+        return 0
+    address = ""
+    if "--address" in argv:
+        address = argv[argv.index("--address") + 1]
+    address = address or os.environ.get("GALAXY_BUDS_ADDRESS", "")
+    Daemon(address).run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "aislandener.galaxy-buds",
+  "name": "Galaxy Buds",
+  "version": "0.1.0",
+  "author": "Aislan Dener Souza Vicentini",
+  "license": "MIT",
+  "description": "Noise control for Samsung Galaxy Buds straight from the bar: ANC, ambient sound, 360 Audio, touch controls and quick connect.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Galaxy Buds",
+    "description": "Switch between off, ANC and ambient sound, see per-earbud battery, and toggle 360 Audio, touch controls and quick connect.",
+    "category": "Audio",
+    "aliases": ["buds", "galaxy buds", "anc", "fone", "ruido"],
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
