@@ -115,8 +115,19 @@ the earbuds are sitting in it, so that bar comes and goes. Which earbud is
 charging is only reported from Buds2 on — on older models that byte means
 something else, so no bolt is shown rather than a guessed one.
 
-The codec list comes from PipeWire, not from the earbuds, so it works the same
+### Codec
+
+The codec row comes from PipeWire, not from the earbuds, so it works the same
 on every model. If you already run the `bt.codecs` plugin, this replaces it.
+
+**Auto** is PipeWire's generic A2DP profile: it negotiates the best codec both
+ends support, which is usually what you want. Because the profile name says
+nothing about what it picked, the section header shows the codec actually in
+use — `Codec · AAC` — read from the sink rather than the profile. The other
+buttons pin a specific codec instead.
+
+A codec only appears when both the earbuds and PipeWire offer it. AAC needs
+`libfdk-aac` installed; a pair that never negotiates AAC will not list it.
 
 Tested on **Galaxy Buds2 Pro** and **Galaxy Buds+**. The rest come from the
 protocol layout and have not been exercised on real hardware.

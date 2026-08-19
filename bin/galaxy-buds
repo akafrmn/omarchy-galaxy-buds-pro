@@ -394,8 +394,30 @@ def codec_label(profile_name):
     return CODEC_LABELS.get(codec, codec.replace("_", "-").upper())
 
 
-def read_codecs(cards_json, address):
-    """The A2DP profiles a card offers are its codecs, one profile each."""
+def active_codec(sinks_json, address):
+    """What the link is actually running on. The generic A2DP profile does not
+    say which codec it negotiated -- the sink does, in api.bluez5.codec."""
+    try:
+        sinks = json.loads(sinks_json or "[]")
+    except ValueError:
+        return ""
+    for sink in sinks:
+        properties = sink.get("properties") or {}
+        if str(properties.get("api.bluez5.address", "")).upper() != address:
+            continue
+        return str(properties.get("api.bluez5.codec") or "")
+    return ""
+
+
+def read_codecs(cards_json, sinks_json, address):
+    """Codec choices for a card: let PipeWire negotiate the best one, or pin a
+    specific profile.
+
+    "a2dp-sink" is the automatic profile -- it has no codec in its name because
+    it picks one, usually the best both ends support. The a2dp-sink-<codec>
+    profiles pin that codec instead. Listing only the pinned ones hides the very
+    codec in use: a pair running on AAC through the automatic profile has no
+    a2dp-sink-aac to show."""
     card_name = "bluez_card." + address.replace(":", "_")
     try:
         cards = json.loads(cards_json or "[]")
@@ -405,18 +427,23 @@ def read_codecs(cards_json, address):
         if card.get("name") != card_name:
             continue
         active = str(card.get("active_profile") or "")
+        profiles = card.get("profiles") or {}
         options = []
-        for name, info in (card.get("profiles") or {}).items():
-            # "a2dp-sink" on its own is PipeWire's generic A2DP profile, with no
-            # codec in its name -- it would render as a nameless button.
+        for name, info in profiles.items():
             if not name.startswith("a2dp-sink-"):
                 continue
             if isinstance(info, dict) and info.get("available") == "no":
                 continue
             options.append({"value": name, "label": codec_label(name)})
         options.sort(key=lambda option: option["label"])
-        return {"active": active if active.startswith("a2dp-sink-") else "",
-                "card": card_name, "options": options}
+        if "a2dp-sink" in profiles:
+            options.insert(0, {"value": "a2dp-sink", "label": "Auto"})
+
+        codec = active_codec(sinks_json, address)
+        return {"card": card_name,
+                "active": active if active.startswith("a2dp-sink") else "",
+                "codec": CODEC_LABELS.get(codec, codec.replace("_", "-").upper()),
+                "options": options}
     return None
 
 
@@ -518,7 +545,8 @@ class Daemon:
         address = self.state.get("address", "")
         if not address:
             return True
-        codecs = read_codecs(pactl("-f", "json", "list", "cards"), address)
+        codecs = read_codecs(pactl("-f", "json", "list", "cards"),
+                             pactl("-f", "json", "list", "sinks"), address)
         is_default = bool(self.default_address) and self.default_address == address
         changed = {}
         if codecs != self.state.get("codec"):

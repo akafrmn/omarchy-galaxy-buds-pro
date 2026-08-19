@@ -348,7 +348,9 @@ Panel {
 
         PanelSectionHeader {
           width: parent.width
-          text: root.t("codec", "Codec")
+          // The automatic profile does not say which codec it settled on, and
+          // that is the one thing worth knowing here.
+          text: root.t("codec", "Codec") + (root.codec.codec ? "  ·  " + root.codec.codec : "")
           foreground: root.foreground
           fontFamily: root.fontFamily
           visible: root.codecOptions.length > 1

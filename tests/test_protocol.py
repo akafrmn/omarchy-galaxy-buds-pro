@@ -147,27 +147,45 @@ def test_address_from_sink_name():
     assert gb.address_from_sink(None) == ""
 
 
-def test_read_codecs_lists_a2dp_profiles():
-    cards = json.dumps([
-        {"name": "alsa_card.pci", "profiles": {}},
-        {"name": "bluez_card.40_35_E6_0C_B4_A1",
-         "active_profile": "a2dp-sink-aac",
-         "profiles": {
-             "a2dp-sink": {"available": "yes"},
-             "a2dp-sink-sbc": {"available": "yes"},
-             "a2dp-sink-sbc_xq": {"available": "yes"},
-             "a2dp-sink-aac": {"available": "yes"},
-             "a2dp-sink-ldac": {"available": "no"},
-             "headset-head-unit": {"available": "yes"},
-         }},
-    ])
-    codecs = gb.read_codecs(cards, "40:35:E6:0C:B4:A1")
-    assert codecs["active"] == "a2dp-sink-aac"
-    # The nameless generic "a2dp-sink" profile must not become a blank button.
-    assert [o["label"] for o in codecs["options"]] == ["AAC", "SBC", "SBC-XQ"]
+CARDS = json.dumps([
+    {"name": "alsa_card.pci", "profiles": {}},
+    {"name": "bluez_card.40_35_E6_0C_B4_A1",
+     "active_profile": "a2dp-sink",
+     "profiles": {
+         "a2dp-sink": {"available": "yes"},
+         "a2dp-sink-sbc": {"available": "yes"},
+         "a2dp-sink-sbc_xq": {"available": "yes"},
+         "a2dp-sink-ldac": {"available": "no"},
+         "headset-head-unit": {"available": "yes"},
+     }},
+])
+
+SINKS = json.dumps([
+    {"name": "bluez_output.40_35_E6_0C_B4_A1.1",
+     "properties": {"api.bluez5.address": "40:35:E6:0C:B4:A1", "api.bluez5.codec": "aac"}},
+])
+
+
+def test_read_codecs_offers_auto_and_the_pinned_profiles():
+    codecs = gb.read_codecs(CARDS, SINKS, "40:35:E6:0C:B4:A1")
+    # Auto first: it is the profile that picks the best codec both ends support.
+    assert [o["label"] for o in codecs["options"]] == ["Auto", "SBC", "SBC-XQ"]
+    assert codecs["options"][0]["value"] == "a2dp-sink"
+    # An unavailable profile is not an option.
+    assert "LDAC" not in [o["label"] for o in codecs["options"]]
+    # No blank buttons.
     assert all(o["label"] for o in codecs["options"])
     # A different pair's card is not this pair's codec list.
-    assert gb.read_codecs(cards, "AA:BB:CC:DD:EE:FF") is None
+    assert gb.read_codecs(CARDS, SINKS, "AA:BB:CC:DD:EE:FF") is None
+
+
+def test_codec_in_use_comes_from_the_sink():
+    # The automatic profile is running AAC, which no profile name would reveal.
+    codecs = gb.read_codecs(CARDS, SINKS, "40:35:E6:0C:B4:A1")
+    assert codecs["active"] == "a2dp-sink"
+    assert codecs["codec"] == "AAC"
+    assert gb.active_codec(SINKS, "40:35:E6:0C:B4:A1") == "aac"
+    assert gb.active_codec(SINKS, "AA:BB:CC:DD:EE:FF") == ""
 
 
 def test_codec_labels_are_written_the_way_people_say_them():
@@ -182,7 +200,7 @@ def test_codec_section_empty_while_on_a_call():
     cards = json.dumps([{"name": "bluez_card.40_35_E6_0C_B4_A1",
                          "active_profile": "headset-head-unit",
                          "profiles": {"a2dp-sink-aac": {"available": "yes"}}}])
-    assert gb.read_codecs(cards, "40:35:E6:0C:B4:A1")["active"] == ""
+    assert gb.read_codecs(cards, SINKS, "40:35:E6:0C:B4:A1")["active"] == ""
 
 
 def test_charging_is_only_read_where_the_model_reports_it():
