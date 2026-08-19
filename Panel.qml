@@ -11,11 +11,10 @@ Panel {
   ipcTarget: "aislandener.galaxy-buds"
   manageIpc: false
 
-  readonly property string helperPath: Qt.resolvedUrl("bin/galaxy-buds").toString().replace(/^file:\/\//, "")
-
-  // Whole state arrives as one JSON object per line; the daemon always sends
-  // the complete picture, so replacing it wholesale keeps bindings simple.
-  property var state: ({})
+  // The helper lives in the plugin's service, mounted once per session; this
+  // widget is mounted once per monitor and only renders what the service holds.
+  readonly property var service: bar && bar.shell ? bar.shell.serviceFor(moduleName) : null
+  readonly property var state: service ? service.state : ({})
 
   readonly property bool connected: state.connected === true
   readonly property string noise: String(state.noise || "off")
@@ -39,24 +38,9 @@ Panel {
     return out
   }
 
-  function send(request) {
-    if (daemon.running) daemon.write(JSON.stringify(request) + "\n")
-  }
-
-  function setNoise(mode) { send({"cmd": "noise", "value": mode}) }
-  function cycle() { send({"cmd": "cycle"}) }
-  function setToggle(name, value) { send({"cmd": name, "value": value}) }
-
-  function applyState(line) {
-    var text = String(line || "").trim()
-    if (text === "") return
-    try {
-      root.state = JSON.parse(text)
-    } catch (error) {
-      // A malformed line means the helper printed something unexpected; the
-      // next state line supersedes it anyway.
-    }
-  }
+  function setNoise(mode) { if (service) service.setNoise(mode) }
+  function cycle() { if (service) service.cycle() }
+  function setToggle(name, value) { if (service) service.setToggle(name, value) }
 
   // The glyph carries the mode on its own, the way the other bar icons do:
   // an ear that hears the room for ambient, a crossed-out one for ANC.
@@ -91,40 +75,6 @@ Panel {
     else if (cursorIndex === 2) setToggle("touch", !(touch.enabled === true))
     else if (cursorIndex === 3) setToggle("seamless", !(state.seamless === true))
     else cycle()
-  }
-
-  Process {
-    id: daemon
-    running: true
-    command: ["/usr/bin/python3", root.helperPath]
-    stdinEnabled: true
-    stdout: SplitParser {
-      onRead: function(line) { root.applyState(line) }
-    }
-    // The helper dying (BlueZ restart, a stray kill) would otherwise leave the
-    // widget frozen on its last state forever.
-    onExited: {
-      root.state = {}
-      restartTimer.restart()
-    }
-  }
-
-  Timer {
-    id: restartTimer
-    interval: 3000
-    repeat: false
-    onTriggered: daemon.running = true
-  }
-
-  IpcHandler {
-    target: root.ipcTarget
-
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function toggle(): void { root.toggle() }
-    function cycle(): void { root.cycle() }
-    function set(mode: string): void { root.setNoise(mode) }
-    function status(): string { return JSON.stringify(root.state) }
   }
 
   BarIconButton {
@@ -296,9 +246,11 @@ Panel {
         Text {
           width: parent.width
           visible: !root.connected
-          text: root.state.reason === "not paired"
-                ? "Nenhum Galaxy Buds pareado."
-                : "Fones desconectados. Tire-os do estojo para reconectar."
+          text: !root.service
+                ? "O serviço do plugin não está ativo."
+                : root.state.reason === "not paired"
+                  ? "Nenhum Galaxy Buds pareado."
+                  : "Fones desconectados. Tire-os do estojo para reconectar."
           color: Qt.darker(root.foreground, 1.55)
           font.family: root.fontFamily
           font.pixelSize: Style.font.body

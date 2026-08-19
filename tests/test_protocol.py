@@ -148,6 +148,20 @@ def test_commands_do_not_guess_state_before_the_ack():
     assert "spatial" not in daemon.state
 
 
+def test_stdin_handles_two_commands_arriving_together():
+    import os
+    read_fd, write_fd = os.pipe()
+    daemon = gb.Daemon()
+    daemon.emit = lambda: None
+    sent = []
+    daemon.send = lambda msg_id, payload=b"": sent.append(payload)
+    os.write(write_fd, b'{"cmd":"noise","value":"off"}\n{"cmd":"noise","value":"anc"}\n')
+    daemon.on_stdin(read_fd, 0)
+    os.close(write_fd)
+    os.close(read_fd)
+    assert sent == [bytes([0]), bytes([1])]
+
+
 def test_seamless_is_inverted_on_the_wire():
     daemon = gb.Daemon()
     sent = []

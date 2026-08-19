@@ -201,6 +201,8 @@ class Daemon:
         self.buffer = b""
         self.device_path = None
         self.connecting = False
+        self.stdin_buffer = b""
+        self.registered = False
 
     # ---- output ----------------------------------------------------------
     def emit(self):
@@ -231,7 +233,7 @@ class Daemon:
     def connect(self):
         """Retry tick: always returns True so the GLib timer stays alive."""
         import dbus
-        if self.socket or self.connecting:
+        if self.socket or self.connecting or not self.registered:
             return True
         bus = self.bus
         path, device = self.find_device(bus)
@@ -380,11 +382,40 @@ class Daemon:
             self.emit()
 
     def on_stdin(self, fd, condition):
-        line = sys.stdin.readline()
-        if not line:
+        # Read the fd directly rather than through sys.stdin: readline() pulls a
+        # whole block into Python's buffer, so a second command arriving in the
+        # same chunk would sit there unseen until the next write woke us up.
+        try:
+            chunk = os.read(fd, 4096)
+        except BlockingIOError:
+            return True
+        if not chunk:
             self.loop.quit()
             return False
-        self.command(line.strip())
+        self.stdin_buffer += chunk
+        while b"\n" in self.stdin_buffer:
+            line, self.stdin_buffer = self.stdin_buffer.split(b"\n", 1)
+            self.command(line.decode("utf-8", "replace").strip())
+        return True
+
+    def register_profile(self):
+        """BlueZ allows one registration per UUID, so a helper left over from a
+        previous shell instance makes this fail. Keep retrying instead of dying:
+        the moment the old one exits, this one takes over."""
+        import dbus
+        if self.registered:
+            return False
+        try:
+            self.manager.UnregisterProfile(self.profile_path)
+        except dbus.DBusException:
+            pass
+        try:
+            self.manager.RegisterProfile(self.profile_path, SPP_UUID,
+                                         {"Role": "client", "Service": SPP_UUID,
+                                          "Name": "omarchy-galaxy-buds"})
+            self.registered = True
+        except dbus.DBusException:
+            self.update({"connected": False, "reason": "profile busy"})
         return True
 
     # ---- lifecycle -------------------------------------------------------
@@ -414,18 +445,14 @@ class Daemon:
 
         path = "/omarchy/galaxybuds"
         BluezProfile(self.bus, path)
-        manager = dbus.Interface(self.bus.get_object("org.bluez", "/org/bluez"),
-                                 "org.bluez.ProfileManager1")
-        try:
-            manager.UnregisterProfile(path)
-        except dbus.DBusException:
-            pass
-        manager.RegisterProfile(path, SPP_UUID,
-                                {"Role": "client", "Service": SPP_UUID,
-                                 "Name": "omarchy-galaxy-buds"})
+        self.manager = dbus.Interface(self.bus.get_object("org.bluez", "/org/bluez"),
+                                      "org.bluez.ProfileManager1")
+        self.profile_path = path
+        self.register_profile()
 
         GLib.io_add_watch(sys.stdin.fileno(), GLib.PRIORITY_DEFAULT,
                           GLib.IOCondition.IN | GLib.IOCondition.HUP, self.on_stdin)
+        GLib.timeout_add_seconds(5, self.register_profile)
         self.connect()
         GLib.timeout_add_seconds(5, self.connect)
         self.loop.run()
