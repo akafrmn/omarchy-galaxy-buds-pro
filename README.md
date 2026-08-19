@@ -37,7 +37,11 @@ available. Never call `bin/galaxy-buds` directly for this — see below.
 `bin/galaxy-buds` speaks Samsung's SPP protocol over an RFCOMM socket that
 BlueZ hands over through the Profile1 API — the same path GalaxyBudsClient
 takes on Linux. It prints the earbud state as JSON lines and takes commands as
-JSON lines on stdin; the QML widget runs it as a child process.
+JSON lines on stdin.
+
+The plugin runs it from `Service.qml`, which the shell mounts once per session,
+and every bar reads that one object. Bar widgets are mounted once per monitor,
+so owning the process in the widget would start one helper per screen.
 
 **Only one program can hold that connection.** Opening the GalaxyBudsClient GUI
 while the widget is running will take the link away from one of the two, and

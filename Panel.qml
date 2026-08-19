@@ -14,18 +14,22 @@ Panel {
   // The helper lives in the plugin's service, mounted once per session; this
   // widget is mounted once per monitor and only renders what the service holds.
   readonly property var service: bar && bar.shell ? bar.shell.serviceFor(moduleName) : null
-  readonly property var state: service ? service.state : ({})
+  readonly property var buds: service ? service.state : ({})
 
-  readonly property bool connected: state.connected === true
-  readonly property string noise: String(state.noise || "off")
-  readonly property var battery: state.battery || ({})
-  readonly property var touch: state.touch || ({})
-  readonly property var modes: state.modes || ["off", "anc", "ambient"]
-  readonly property bool hasSpatial: state.spatial !== undefined
-  readonly property string deviceName: String(state.name || "Galaxy Buds")
+  readonly property bool connected: buds.connected === true
+  readonly property string noise: String(buds.noise || "off")
+  readonly property var battery: buds.battery || ({})
+  readonly property var touch: buds.touch || ({})
+  readonly property var modes: buds.modes || ["off", "anc", "ambient"]
+  readonly property bool hasSpatial: buds.spatial !== undefined
+  readonly property string deviceName: String(buds.name || "Galaxy Buds")
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+
+  // Without these the bar gives the widget zero width and nothing renders.
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
 
   property int cursorIndex: 0
   readonly property int cursorCount: 4  // modes row + three toggles
@@ -71,9 +75,9 @@ Panel {
 
   function activateCursor() {
     if (!connected) return
-    if (cursorIndex === 1) setToggle("spatial", !(state.spatial === true))
+    if (cursorIndex === 1) setToggle("spatial", !(buds.spatial === true))
     else if (cursorIndex === 2) setToggle("touch", !(touch.enabled === true))
-    else if (cursorIndex === 3) setToggle("seamless", !(state.seamless === true))
+    else if (cursorIndex === 3) setToggle("seamless", !(buds.seamless === true))
     else cycle()
   }
 
@@ -206,12 +210,12 @@ Panel {
 
         Repeater {
           model: root.connected ? [
-            {"key": "spatial", "label": "360 Audio", "checked": root.state.spatial === true,
+            {"key": "spatial", "label": "360 Audio", "checked": root.buds.spatial === true,
              "shown": root.hasSpatial, "cursor": 1},
             {"key": "touch", "label": "Controles de toque", "checked": root.touch.enabled === true,
              "shown": true, "cursor": 2},
-            {"key": "seamless", "label": "Conexão rápida", "checked": root.state.seamless === true,
-             "shown": root.state.seamless !== undefined, "cursor": 3}
+            {"key": "seamless", "label": "Conexão rápida", "checked": root.buds.seamless === true,
+             "shown": root.buds.seamless !== undefined, "cursor": 3}
           ] : []
 
           Item {
@@ -248,7 +252,7 @@ Panel {
           visible: !root.connected
           text: !root.service
                 ? "O serviço do plugin não está ativo."
-                : root.state.reason === "not paired"
+                : root.buds.reason === "not paired"
                   ? "Nenhum Galaxy Buds pareado."
                   : "Fones desconectados. Tire-os do estojo para reconectar."
           color: Qt.darker(root.foreground, 1.55)
