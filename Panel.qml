@@ -141,7 +141,9 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(320))
+    // Codec buttons sit in one row, so the popover has to grow with them
+    // rather than let the last one run past its edge.
+    contentWidth: panel.fittedContentWidth(Style.space(root.codecOptions.length > 2 ? 400 : 320))
     contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(420))
 
     PanelKeyCatcher {

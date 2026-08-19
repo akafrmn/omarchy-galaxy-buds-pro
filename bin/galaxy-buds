@@ -375,10 +375,23 @@ def address_from_sink(sink_name):
     return ":".join(parts).upper() if len(parts) == 6 else ""
 
 
+# How each codec is written down when people talk about it. Anything not
+# listed falls back to the profile name, which is close enough to read.
+CODEC_LABELS = {
+    "sbc": "SBC", "sbc_xq": "SBC-XQ", "aac": "AAC", "ldac": "LDAC",
+    "aptx": "aptX", "aptx_hd": "aptX HD", "aptx_ll": "aptX LL",
+    "aptx_ll_duplex": "aptX LL duplex", "aptx_duplex": "aptX duplex",
+    "faststream": "FastStream", "faststream_duplex": "FastStream duplex",
+    "lc3": "LC3", "opus_05": "Opus", "opus_05_duplex": "Opus duplex",
+    "opus_05_pro": "Opus Pro",
+}
+
+
 def codec_label(profile_name):
-    """a2dp-sink-sbc-xq -> SBC-XQ. Reading the name beats the description,
+    """a2dp-sink-sbc_xq -> SBC-XQ. Reading the name beats the description,
     which is translated and worded differently between PipeWire versions."""
-    return profile_name[len("a2dp-sink-"):].upper()
+    codec = profile_name[len("a2dp-sink-"):]
+    return CODEC_LABELS.get(codec, codec.replace("_", "-").upper())
 
 
 def read_codecs(cards_json, address):
@@ -394,13 +407,15 @@ def read_codecs(cards_json, address):
         active = str(card.get("active_profile") or "")
         options = []
         for name, info in (card.get("profiles") or {}).items():
-            if not name.startswith("a2dp-sink"):
+            # "a2dp-sink" on its own is PipeWire's generic A2DP profile, with no
+            # codec in its name -- it would render as a nameless button.
+            if not name.startswith("a2dp-sink-"):
                 continue
             if isinstance(info, dict) and info.get("available") == "no":
                 continue
             options.append({"value": name, "label": codec_label(name)})
         options.sort(key=lambda option: option["label"])
-        return {"active": active if active.startswith("a2dp-sink") else "",
+        return {"active": active if active.startswith("a2dp-sink-") else "",
                 "card": card_name, "options": options}
     return None
 

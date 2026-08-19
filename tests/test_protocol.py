@@ -153,8 +153,9 @@ def test_read_codecs_lists_a2dp_profiles():
         {"name": "bluez_card.40_35_E6_0C_B4_A1",
          "active_profile": "a2dp-sink-aac",
          "profiles": {
+             "a2dp-sink": {"available": "yes"},
              "a2dp-sink-sbc": {"available": "yes"},
-             "a2dp-sink-sbc-xq": {"available": "yes"},
+             "a2dp-sink-sbc_xq": {"available": "yes"},
              "a2dp-sink-aac": {"available": "yes"},
              "a2dp-sink-ldac": {"available": "no"},
              "headset-head-unit": {"available": "yes"},
@@ -162,9 +163,19 @@ def test_read_codecs_lists_a2dp_profiles():
     ])
     codecs = gb.read_codecs(cards, "40:35:E6:0C:B4:A1")
     assert codecs["active"] == "a2dp-sink-aac"
+    # The nameless generic "a2dp-sink" profile must not become a blank button.
     assert [o["label"] for o in codecs["options"]] == ["AAC", "SBC", "SBC-XQ"]
+    assert all(o["label"] for o in codecs["options"])
     # A different pair's card is not this pair's codec list.
     assert gb.read_codecs(cards, "AA:BB:CC:DD:EE:FF") is None
+
+
+def test_codec_labels_are_written_the_way_people_say_them():
+    assert gb.codec_label("a2dp-sink-sbc_xq") == "SBC-XQ"
+    assert gb.codec_label("a2dp-sink-aptx_hd") == "aptX HD"
+    assert gb.codec_label("a2dp-sink-ldac") == "LDAC"
+    # Something the table has never heard of still reads sanely.
+    assert gb.codec_label("a2dp-sink-brand_new") == "BRAND-NEW"
 
 
 def test_codec_section_empty_while_on_a_call():
