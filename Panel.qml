@@ -55,11 +55,6 @@ Panel {
     return "󰋋"
   }
 
-  function modeLabel() {
-    var labels = {"off": "Desligado", "anc": "ANC", "ambient": "Som ambiente", "adaptive": "Adaptativo"}
-    return connected ? (labels[noise] || noise) : "Desconectado"
-  }
-
   function batteryText() {
     if (!connected) return "desconectado"
     var left = battery.left, right = battery.right
@@ -90,12 +85,6 @@ Panel {
     onPressed: function(mouseButton) {
       if (mouseButton === Qt.RightButton) root.cycle()
       else root.toggle()
-    }
-
-    PanelToolTip {
-      visible: button.tooltipHovered && !root.opened
-      text: root.modeLabel()
-      fontFamily: root.fontFamily
     }
   }
 
