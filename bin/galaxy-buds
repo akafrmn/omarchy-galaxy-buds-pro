@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Galaxy Buds noise-control daemon for the Omarchy shell.
+"""Galaxy Buds control daemon for the Omarchy shell.
 
 Speaks Samsung's SPP protocol over an RFCOMM socket that BlueZ hands us through
 the Profile1 API, the same path GalaxyBudsClient takes on Linux. Reads commands
@@ -18,13 +18,19 @@ import sys
 
 DEBUG = bool(os.environ.get("GALAXY_BUDS_DEBUG"))
 
-SPP_UUID = "2e73a4ad-332d-41fc-90e2-16bef06523f2"
-# The device id is the tail of this vendor UUID; the device name is useless
-# because earbuds can be renamed.
+# Each generation answers on its own service. The 1101 one is plain SPP, which
+# plenty of unrelated devices also advertise, so a device only counts as
+# earbuds when it carries the new service or its name matches a known model.
+SPP_NEW = "2e73a4ad-332d-41fc-90e2-16bef06523f2"
+SPP_STANDARD = "00001101-0000-1000-8000-00805f9b34fb"
+SPP_LEGACY = "00001102-0000-1000-8000-00805f9b34fd"
+
+# The device id is the tail of this vendor UUID. Only models from Buds2 on
+# publish it; older ones are identified by name.
 DEVICE_ID_UUID_PREFIX = "d908aab5-7a90-4cbe-8641-86a553db"
 
-SOM = 0xFD
-EOM = 0xDD
+SOM, EOM = 0xFD, 0xDD
+LEGACY_SOM, LEGACY_EOM = 0xFE, 0xEE
 
 MSG_ACK = 66
 MSG_STATUS = 96
@@ -32,32 +38,98 @@ MSG_EXTENDED_STATUS = 97
 MSG_NOISE_CONTROLS_UPDATE = 119
 MSG_NOISE_CONTROLS = 120
 MSG_SET_SPATIAL_AUDIO = 124
+MSG_SET_AMBIENT_MODE = 128
+MSG_AMBIENT_MODE_UPDATED = 129
 MSG_LOCK_TOUCHPAD = 144
+MSG_SET_NOISE_REDUCTION = 152
+MSG_NOISE_REDUCTION_MODE_UPDATE = 155
 MSG_SET_SEAMLESS_CONNECTION = 175
 
-MODES = {"off": 0, "anc": 1, "ambient": 2, "adaptive": 3}
+MODES = {"off": 0, "anc": 1, "ambient": 2}
 MODE_NAMES = {v: k for k, v in MODES.items()}
 
-# Everything else in the protocol is shared across models. Only these three
-# things actually diverge, so a new model is an entry here, not a new script.
-# spatial_offset is where 360 Audio sits in the extended status payload;
-# lock is the touchpad message shape; modes are the noise modes the model has.
-PROFILES = {
-    "buds2pro": {"ids": range(325, 329), "spatial_offset": 35,
-                 "modes": ("off", "anc", "ambient"), "lock": "bits7"},
-    "budspro": {"ids": range(298, 302), "spatial_offset": 28,
-                "modes": ("off", "anc", "ambient"), "lock": "byte"},
-    "buds2": {"ids": range(313, 322), "spatial_offset": 35,
-              "modes": ("off", "anc", "ambient"), "lock": "bits7"},
-    "buds3": {"ids": (333, 334), "spatial_offset": 35,
-              "modes": ("off", "anc", "ambient", "adaptive"), "lock": "bits7"},
-    "buds3pro": {"ids": (340, 341), "spatial_offset": 35,
-                 "modes": ("off", "anc", "ambient", "adaptive"), "lock": "bits7"},
-}
-# Unknown model: noise control and battery still work, 360 Audio is hidden
-# rather than reading a byte that means something else on that firmware.
-UNKNOWN_PROFILE = {"ids": (), "spatial_offset": None,
-                   "modes": ("off", "anc", "ambient"), "lock": "bits7"}
+# What actually differs between models. Everything else -- framing, CRC, the
+# commands, the battery messages -- is shared, so adding a model is a row here.
+#
+#   noise:    (kind, offset in the extended status)
+#             "controls" = one byte with three modes (Buds Pro and newer)
+#             "ambient"  = ambient sound on/off (Buds, Buds+, no ANC at all)
+#             "anc"      = noise cancelling on/off (Buds Live, no ambient mode)
+#   touch:    (shape, offset); "bits7" models send seven booleans back
+#   seamless: (offset, first firmware revision that reports it)
+#   spatial:  same, or None when the model has no 360 Audio
+#
+# Order matters: name matching walks this list, so "Buds2 Pro" has to come
+# before "Buds2".
+PROFILES = [
+    {"name": "buds", "ids": (257, 14336), "match": ("Galaxy Buds (",),
+     "uuid": SPP_LEGACY, "legacy_frame": True, "wearing": "legacy", "case_battery": False,
+     "modes": ("off", "ambient"), "noise": ("ambient", 7), "touch": ("byte", 12),
+     "seamless": None, "spatial": None},
+
+    {"name": "budsplus", "ids": tuple(range(258, 267)), "match": ("Galaxy Buds+ (", "Buds+"),
+     "uuid": SPP_STANDARD,
+     "modes": ("off", "ambient"), "noise": ("ambient", 8), "touch": ("byte", 12),
+     "seamless": (21, 11), "spatial": None},
+
+    {"name": "budslive", "ids": tuple(range(278, 285)), "match": ("Buds Live",),
+     "uuid": SPP_STANDARD,
+     "modes": ("off", "anc"), "noise": ("anc", 12), "touch": ("byte", 10),
+     "seamless": (19, 0), "spatial": (24, 9)},
+
+    {"name": "budspro", "ids": tuple(range(298, 302)), "match": ("Buds Pro",),
+     "uuid": SPP_STANDARD,
+     "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("byte", 10),
+     "seamless": (19, 0), "spatial": (28, 2)},
+
+    {"name": "buds2pro", "ids": tuple(range(325, 329)), "match": ("Buds2 Pro",),
+     "uuid": SPP_NEW,
+     "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
+     "seamless": (19, 0), "spatial": (35, 1)},
+
+    {"name": "buds2", "ids": tuple(range(313, 322)) + (14337,), "match": ("Buds2",),
+     "uuid": SPP_NEW,
+     "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
+     "seamless": (19, 0), "spatial": (35, 8)},
+
+    {"name": "budscore", "ids": (322, 323), "match": ("Buds Core",),
+     "uuid": SPP_NEW,
+     "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
+     "seamless": (19, 0), "spatial": None},
+
+    {"name": "budsfe", "ids": (330, 331), "match": ("Buds FE",),
+     "uuid": SPP_NEW,
+     "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
+     "seamless": (19, 0), "spatial": (35, 0)},
+
+    {"name": "buds3pro", "ids": (340, 341), "match": ("Buds3 Pro",),
+     "uuid": SPP_NEW,
+     "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
+     "seamless": (19, 0), "spatial": (35, 0)},
+
+    {"name": "buds3fe", "ids": (347, 348), "match": ("Buds3 FE",),
+     "uuid": SPP_NEW,
+     "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
+     "seamless": (19, 0), "spatial": None},
+
+    {"name": "buds3", "ids": (333, 334), "match": ("Buds3",),
+     "uuid": SPP_NEW,
+     "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
+     "seamless": (19, 0), "spatial": (35, 0)},
+]
+
+# Anything newer than this file knows about: the noise byte and the touch
+# bitmask have sat still since Buds Live, so those still work. 360 Audio moved
+# around between models, so it is hidden rather than read from the wrong byte.
+UNKNOWN_PROFILE = {"name": "unknown", "ids": (), "match": (), "uuid": SPP_NEW,
+                   "modes": ("off", "anc", "ambient"), "noise": ("controls", 12),
+                   "touch": ("bits7", 10), "seamless": (19, 0), "spatial": None}
+
+DEFAULTS = {"legacy_frame": False, "wearing": "nibbles", "case_battery": True}
+
+
+def profile_get(profile, key):
+    return profile.get(key, DEFAULTS.get(key))
 
 
 def _crc_table():
@@ -81,51 +153,48 @@ def crc16(data):
     return crc
 
 
-def encode(msg_id, payload=b""):
+def encode(msg_id, payload=b"", legacy=False):
     payload = bytes(payload)
     size = 1 + len(payload) + 2
     body = bytes([msg_id]) + payload
-    return (bytes([SOM]) + struct.pack("<H", size) + body
-            + struct.pack("<H", crc16(body)) + bytes([EOM]))
+    # The original Buds put the message type and size in a byte each; everyone
+    # since packs both into one little-endian short.
+    header = bytes([0, size]) if legacy else struct.pack("<H", size)
+    som, eom = (LEGACY_SOM, LEGACY_EOM) if legacy else (SOM, EOM)
+    return bytes([som]) + header + body + struct.pack("<H", crc16(body)) + bytes([eom])
 
 
-def decode(buffer):
+def decode(buffer, legacy=False):
     """Pull whole frames out of buffer; returns (messages, leftover bytes)."""
+    som, eom = (LEGACY_SOM, LEGACY_EOM) if legacy else (SOM, EOM)
     messages = []
     while True:
-        start = buffer.find(bytes([SOM]))
+        start = buffer.find(bytes([som]))
         if start < 0:
             return messages, b""
         buffer = buffer[start:]
         if len(buffer) < 6:
             return messages, buffer
-        size = struct.unpack("<H", buffer[1:3])[0] & 0x3FF
+        size = buffer[2] if legacy else struct.unpack("<H", buffer[1:3])[0] & 0x3FF
         total = 3 + size + 1
         if size < 3:
             buffer = buffer[1:]
             continue
         if len(buffer) < total:
-            # Wait for the rest. A stray 0xFD claiming a big size would stall
-            # here until enough bytes arrive, but an SPP stream stays framed:
-            # we only ever start reading at a real frame boundary.
+            # Wait for the rest. A stray start byte claiming a big size would
+            # stall here until enough bytes arrive, but an SPP stream stays
+            # framed: we only ever start reading at a real frame boundary.
             return messages, buffer
         frame, rest = buffer[:total], buffer[total:]
         body = frame[3:3 + size - 2]
         crc = struct.unpack("<H", frame[total - 3:total - 1])[0]
-        # A bad frame means we locked onto a 0xFD that was really payload, so
-        # skip one byte and resynchronise rather than dropping the whole buffer.
-        if frame[-1] != EOM or crc16(body) != crc:
+        # A bad frame means we locked onto a start byte that was really payload,
+        # so skip one byte and resynchronise rather than dropping the buffer.
+        if frame[-1] != eom or crc16(body) != crc:
             buffer = buffer[1:]
             continue
         messages.append((body[0], body[1:]))
         buffer = rest
-
-
-def profile_for_device_id(device_id):
-    for name, profile in PROFILES.items():
-        if device_id in profile["ids"]:
-            return name, profile
-    return "unknown", UNKNOWN_PROFILE
 
 
 def device_id_from_uuids(uuids):
@@ -139,7 +208,36 @@ def device_id_from_uuids(uuids):
     return None
 
 
-def parse_touch(byte):
+def profile_for(uuids, name):
+    """Device id first (exact, and survives renaming), model name second."""
+    device_id = device_id_from_uuids(uuids)
+    if device_id is not None:
+        for profile in PROFILES:
+            if device_id in profile["ids"]:
+                return profile
+    text = str(name or "")
+    for profile in PROFILES:
+        for needle in profile["match"]:
+            if needle in text:
+                return profile
+    return UNKNOWN_PROFILE
+
+
+def looks_like_earbuds(uuids, name):
+    """Plain SPP is advertised by all sorts of devices, so only trust it when
+    the name matches a model we know."""
+    lowered = [str(u).lower() for u in uuids]
+    if SPP_NEW in lowered:
+        return True
+    if SPP_STANDARD not in lowered and SPP_LEGACY not in lowered:
+        return False
+    return profile_for(uuids, name) is not UNKNOWN_PROFILE
+
+
+def parse_touch(byte, shape):
+    if shape == "byte":
+        # One flag, and it reads the other way around: non-zero means locked.
+        return {"enabled": byte == 0}
     return {
         "enabled": bool(byte & 0x80),
         "tap": bool(byte & 0x08),
@@ -151,33 +249,75 @@ def parse_touch(byte):
     }
 
 
-def parse_wearing(byte):
+def parse_wearing(byte, style):
+    if style == "legacy":
+        return {"left": 1 if byte in (1, 3) else 0, "right": 1 if byte in (2, 3) else 0}
     return {"left": byte >> 4, "right": byte & 0x0F}
 
 
+def read_noise(byte, kind):
+    if kind == "ambient":
+        return "ambient" if byte else "off"
+    if kind == "anc":
+        return "anc" if byte else "off"
+    return MODE_NAMES.get(byte, "unknown")
+
+
+def noise_command(kind, mode):
+    """(msg id, payload) for asking a model to change its noise mode."""
+    if kind == "ambient":
+        return MSG_SET_AMBIENT_MODE, bytes([1 if mode == "ambient" else 0])
+    if kind == "anc":
+        return MSG_SET_NOISE_REDUCTION, bytes([1 if mode == "anc" else 0])
+    return MSG_NOISE_CONTROLS, bytes([MODES.get(mode, 0)])
+
+
+def optional_field(payload, spec, revision):
+    """Read a field the model only reports from some firmware revision on."""
+    if not spec:
+        return None
+    offset, since = spec
+    if revision < since or len(payload) <= offset:
+        return None
+    return payload[offset]
+
+
 def parse_extended_status(payload, profile):
+    revision = payload[0]
+    noise_kind, noise_offset = profile["noise"]
+    touch_shape, touch_offset = profile["touch"]
+
+    battery = {"left": payload[2], "right": payload[3]}
+    if profile_get(profile, "case_battery"):
+        battery["case"] = payload[7]
+
     state = {
-        "revision": payload[0],
-        "battery": {"left": payload[2], "right": payload[3], "case": payload[7]},
-        "wearing": parse_wearing(payload[6]),
-        "noise": MODE_NAMES.get(payload[12], "unknown"),
-        "touch": parse_touch(payload[10]),
-        "seamless": payload[19] == 0,
+        "revision": revision,
+        "battery": battery,
+        "wearing": parse_wearing(payload[6], profile_get(profile, "wearing")),
+        "noise": read_noise(payload[noise_offset], noise_kind),
+        "touch": parse_touch(payload[touch_offset], touch_shape),
     }
-    offset = profile["spatial_offset"]
-    if offset is not None and len(payload) > offset:
-        state["spatial"] = payload[offset] == 1
+
+    seamless = optional_field(payload, profile["seamless"], revision)
+    if seamless is not None:
+        state["seamless"] = seamless == 0
+    spatial = optional_field(payload, profile["spatial"], revision)
+    if spatial is not None:
+        state["spatial"] = spatial == 1
     return state
 
 
-def parse_status(payload):
-    charging = payload[7] if len(payload) > 7 else 0
-    return {
-        "battery": {"left": payload[1], "right": payload[2], "case": payload[6]},
-        "wearing": parse_wearing(payload[5]),
-        "charging": {"left": bool(charging & 0x10), "right": bool(charging & 0x04),
-                     "case": bool(charging & 0x01)},
-    }
+def parse_status(payload, profile):
+    state = {"battery": {"left": payload[1], "right": payload[2]},
+             "wearing": parse_wearing(payload[5], profile_get(profile, "wearing"))}
+    if profile_get(profile, "case_battery") and len(payload) > 6:
+        state["battery"]["case"] = payload[6]
+    if len(payload) > 7:
+        charging = payload[7]
+        state["charging"] = {"left": bool(charging & 0x10), "right": bool(charging & 0x04),
+                             "case": bool(charging & 0x01)}
+    return state
 
 
 def lock_payload(shape, enabled, touch):
@@ -195,13 +335,13 @@ def lock_payload(shape, enabled, touch):
 class Daemon:
     def __init__(self, address=""):
         self.address = address.upper()
-        self.state = {"connected": False, "model": "unknown", "modes": list(UNKNOWN_PROFILE["modes"])}
         self.profile = UNKNOWN_PROFILE
+        self.state = {"connected": False, "model": "unknown", "modes": list(UNKNOWN_PROFILE["modes"])}
         self.socket = None
         self.buffer = b""
+        self.stdin_buffer = b""
         self.device_path = None
         self.connecting = False
-        self.stdin_buffer = b""
         self.registered = False
 
     # ---- output ----------------------------------------------------------
@@ -223,9 +363,11 @@ class Daemon:
             if not device:
                 continue
             uuids = [str(u).lower() for u in device.get("UUIDs", [])]
-            if SPP_UUID not in uuids:
-                continue
-            if self.address and str(device.get("Address", "")).upper() != self.address:
+            name = str(device.get("Alias") or device.get("Name") or "")
+            if self.address:
+                if str(device.get("Address", "")).upper() != self.address:
+                    continue
+            elif not looks_like_earbuds(uuids, name):
                 continue
             return str(path), device
         return None, None
@@ -246,19 +388,27 @@ class Daemon:
             self.update({"connected": False, "reason": "device offline"})
             return True
 
+        uuids = [str(u).lower() for u in device.get("UUIDs", [])]
+        name = str(device.get("Alias") or device.get("Name") or "")
+        profile = profile_for(uuids, name)
+        if profile is not self.profile:
+            self.profile = profile
+            self.registered = False
+            self.register_profile()
+            if not self.registered:
+                return True
+
         self.device_path = path
-        name, profile = profile_for_device_id(device_id_from_uuids(device.get("UUIDs", [])))
-        self.profile = profile
-        self.state["model"] = name
+        self.state["model"] = profile["name"]
         self.state["modes"] = list(profile["modes"])
-        self.state["name"] = str(device.get("Alias") or device.get("Name") or "")
+        self.state["name"] = name
 
         # Must be async: BlueZ calls NewConnection back on us while this call is
         # in flight, and a blocking call would sit on the reply until it times
         # out without ever servicing that callback.
         self.connecting = True
         dbus.Interface(bus.get_object("org.bluez", path), "org.bluez.Device1").ConnectProfile(
-            SPP_UUID,
+            self.profile["uuid"],
             reply_handler=self.on_connect_reply,
             error_handler=self.on_connect_error)
         return True
@@ -306,7 +456,7 @@ class Daemon:
         if not chunk:
             self.disconnect()
             return False
-        messages, self.buffer = decode(self.buffer + chunk)
+        messages, self.buffer = decode(self.buffer + chunk, profile_get(self.profile, "legacy_frame"))
         for msg_id, payload in messages:
             self.handle(msg_id, payload)
         return True
@@ -314,13 +464,18 @@ class Daemon:
     def handle(self, msg_id, payload):
         if DEBUG:
             print(f"<< {msg_id} {payload.hex(' ')}", file=sys.stderr, flush=True)
+        kind = self.profile["noise"][0]
         try:
             if msg_id == MSG_EXTENDED_STATUS:
                 self.update(parse_extended_status(payload, self.profile))
             elif msg_id == MSG_STATUS:
-                self.update(parse_status(payload))
+                self.update(parse_status(payload, self.profile))
             elif msg_id == MSG_NOISE_CONTROLS_UPDATE:
-                self.update({"noise": MODE_NAMES.get(payload[0], "unknown")})
+                self.update({"noise": read_noise(payload[0], "controls")})
+            elif msg_id == MSG_AMBIENT_MODE_UPDATED and kind == "ambient":
+                self.update({"noise": read_noise(payload[0], "ambient")})
+            elif msg_id == MSG_NOISE_REDUCTION_MODE_UPDATE and kind == "anc":
+                self.update({"noise": read_noise(payload[0], "anc")})
             elif msg_id == MSG_ACK:
                 self.handle_ack(payload[0], payload[1:])
         except IndexError:
@@ -334,7 +489,11 @@ class Daemon:
         if not params:
             return
         if acked == MSG_NOISE_CONTROLS:
-            self.update({"noise": MODE_NAMES.get(params[0], "unknown")})
+            self.update({"noise": read_noise(params[0], "controls")})
+        elif acked == MSG_SET_AMBIENT_MODE:
+            self.update({"noise": read_noise(params[0], "ambient")})
+        elif acked == MSG_SET_NOISE_REDUCTION:
+            self.update({"noise": read_noise(params[0], "anc")})
         elif acked == MSG_SET_SPATIAL_AUDIO:
             self.update({"spatial": params[0] == 1})
         elif acked == MSG_SET_SEAMLESS_CONNECTION:
@@ -350,7 +509,7 @@ class Daemon:
         if DEBUG:
             print(f">> {msg_id} {bytes(payload).hex(' ')}", file=sys.stderr, flush=True)
         try:
-            self.socket.sendall(encode(msg_id, payload))
+            self.socket.sendall(encode(msg_id, payload, profile_get(self.profile, "legacy_frame")))
         except OSError:
             self.disconnect()
 
@@ -362,20 +521,21 @@ class Daemon:
             return
         name = request.get("cmd")
         value = request.get("value")
+        modes = self.state.get("modes") or list(UNKNOWN_PROFILE["modes"])
+        kind = self.profile["noise"][0]
 
-        if name == "noise" and value in MODES:
-            self.send(MSG_NOISE_CONTROLS, bytes([MODES[value]]))
+        if name == "noise" and value in modes:
+            self.send(*noise_command(kind, value))
         elif name == "cycle":
-            modes = self.state.get("modes") or list(UNKNOWN_PROFILE["modes"])
             current = self.state.get("noise")
             index = modes.index(current) + 1 if current in modes else 0
-            self.send(MSG_NOISE_CONTROLS, bytes([MODES[modes[index % len(modes)]]]))
-        elif name == "spatial":
+            self.send(*noise_command(kind, modes[index % len(modes)]))
+        elif name == "spatial" and self.profile["spatial"]:
             self.send(MSG_SET_SPATIAL_AUDIO, bytes([1 if value else 0]))
         elif name == "touch":
             self.send(MSG_LOCK_TOUCHPAD,
-                      lock_payload(self.profile["lock"], bool(value), self.state.get("touch", {})))
-        elif name == "seamless":
+                      lock_payload(self.profile["touch"][0], bool(value), self.state.get("touch", {})))
+        elif name == "seamless" and self.profile["seamless"]:
             # Inverted on the wire: 0 enables it.
             self.send(MSG_SET_SEAMLESS_CONNECTION, bytes([0 if value else 1]))
         elif name == "refresh":
@@ -409,9 +569,10 @@ class Daemon:
             self.manager.UnregisterProfile(self.profile_path)
         except dbus.DBusException:
             pass
+        uuid = self.profile["uuid"]
         try:
-            self.manager.RegisterProfile(self.profile_path, SPP_UUID,
-                                         {"Role": "client", "Service": SPP_UUID,
+            self.manager.RegisterProfile(self.profile_path, uuid,
+                                         {"Role": "client", "Service": uuid,
                                           "Name": "omarchy-galaxy-buds"})
             self.registered = True
         except dbus.DBusException:
@@ -443,11 +604,18 @@ class Daemon:
             def RequestDisconnection(self, path):
                 daemon.disconnect()
 
-        path = "/omarchy/galaxybuds"
-        BluezProfile(self.bus, path)
+        self.profile_path = "/omarchy/galaxybuds"
+        BluezProfile(self.bus, self.profile_path)
         self.manager = dbus.Interface(self.bus.get_object("org.bluez", "/org/bluez"),
                                       "org.bluez.ProfileManager1")
-        self.profile_path = path
+
+        # Which service to register depends on the model, and the model is only
+        # known once a device is found, so start on the newest and let connect()
+        # re-register if the paired earbuds turn out to be an older generation.
+        path, device = self.find_device(self.bus)
+        if path:
+            self.profile = profile_for([str(u).lower() for u in device.get("UUIDs", [])],
+                                       device.get("Alias") or device.get("Name") or "")
         self.register_profile()
 
         GLib.io_add_watch(sys.stdin.fileno(), GLib.PRIORITY_DEFAULT,
@@ -461,7 +629,7 @@ class Daemon:
 def main(argv):
     if len(argv) > 1 and argv[1] in ("-h", "--help"):
         print(__doc__.strip())
-        print("\nusage: galaxy-buds [serve] [--address AA:BB:CC:DD:EE:FF]")
+        print("\nusage: galaxy-buds [--address AA:BB:CC:DD:EE:FF]")
         return 0
     address = ""
     if "--address" in argv:

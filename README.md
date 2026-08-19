@@ -1,11 +1,15 @@
 # Galaxy Buds — Omarchy plugin
 
 Noise control for Samsung Galaxy Buds in the Omarchy bar. Click the ear icon to
-switch between **off**, **ANC** and **ambient sound**, see the battery of each
-earbud, and toggle **360 Audio**, **touch controls** and **quick connect**.
+switch noise modes, see the battery of each earbud as a bar, and toggle
+**360 Audio**, **touch controls** and **quick connect**.
 
 The icon follows the earbuds, not the other way around: change the mode by
 touching an earbud or from your phone and the bar updates immediately.
+
+Controls the model does not have are hidden rather than shown dead — a Buds+
+has no ANC and no 360 Audio, so it gets an ambient-sound switch and nothing
+about spatial audio.
 
 ## Install
 
@@ -51,18 +55,65 @@ through its IPC target instead.
 Uses the system Python (`/usr/bin/python3`) for `dbus-python` and `PyGObject`.
 No extra packages, no daemon to install, no root.
 
+## Translating the labels
+
+Every visible string is English by default and can be replaced from this
+widget's entry in `~/.config/omarchy/shell.json`:
+
+```json
+{
+  "id": "aislandener.galaxy-buds",
+  "labels": {
+    "noiseControl": "Controle de ruído",
+    "settings": "Ajustes",
+    "off": "Desligado",
+    "ambient": "Som ambiente",
+    "spatial": "Áudio 360",
+    "touch": "Controles de toque",
+    "seamless": "Conexão rápida",
+    "case": "Estojo",
+    "disconnected": "Desconectado. Tire os fones do estojo para reconectar."
+  }
+}
+```
+
+Every key is optional; anything you leave out keeps its English text.
+
+| Key | Default |
+|---|---|
+| `noiseControl` | Noise control |
+| `settings` | Settings |
+| `off` / `anc` / `ambient` / `adaptive` | Off / ANC / Ambient / Adaptive |
+| `spatial` | 360 Audio |
+| `touch` | Touch controls |
+| `seamless` | Quick connect |
+| `left` / `right` / `case` | L / R / Case |
+| `disconnected` | Disconnected. Take them out of the case to reconnect. |
+| `notPaired` | No Galaxy Buds paired. |
+| `serviceOff` | The plugin service is not running. |
+
 ## Models
 
-Tested on **Galaxy Buds2 Pro**. The framing, the commands and the battery
-messages are shared across Buds Pro, Buds2, Buds2 Pro, Buds FE, Buds3 and
-Buds3 Pro; what differs per model lives in the `PROFILES` table in
-`bin/galaxy-buds`: where 360 Audio sits in the status message, whether the
-model has an adaptive noise mode, and the shape of the touch-lock message.
+| Model | Noise control | 360 Audio | Touch | Quick connect |
+|---|---|---|---|---|
+| Buds (original) | ambient on/off | — | yes | — |
+| Buds+ | ambient on/off | — | yes | firmware 11+ |
+| Buds Live | ANC on/off | firmware 9+ | yes | yes |
+| Buds Pro | off / ANC / ambient | firmware 2+ | yes | yes |
+| Buds2, Buds2 Pro, Buds FE, Buds Core | off / ANC / ambient | most | yes | yes |
+| Buds3, Buds3 Pro, Buds3 FE | off / ANC / ambient | most | yes | yes |
 
-An unknown model still gets noise control and battery, and hides the 360 Audio
-toggle rather than showing a value read from the wrong byte. Buds (original),
-Buds+ and Buds Live are out of scope: their ANC is a plain on/off and their
-framing differs.
+Tested on **Galaxy Buds2 Pro** and **Galaxy Buds+**. The rest come from the
+protocol layout and have not been exercised on real hardware.
+
+What differs per model lives in the `PROFILES` table in `bin/galaxy-buds`:
+which service UUID to connect on (each generation uses a different one), which
+command changes the noise mode, where each field sits in the status message,
+and which firmware revision started reporting it. Adding a model is a row.
+
+A model the table does not know still gets noise control and battery — those
+bytes have not moved since Buds Live — and hides 360 Audio rather than reading
+a byte that means something else on that firmware.
 
 ## Tests
 

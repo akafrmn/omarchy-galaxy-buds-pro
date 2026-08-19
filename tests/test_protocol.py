@@ -13,6 +13,13 @@ gb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gb)
 
 
+def profile(name):
+    for entry in gb.PROFILES:
+        if entry["name"] == name:
+            return entry
+    raise AssertionError("no profile named " + name)
+
+
 def test_crc_matches_reference_frame():
     # Frame documented in GalaxyBudsClient's Crc16.cs: msgId 0x61, then payload,
     # then CRC bytes 0x0F 0xF3.
@@ -68,7 +75,7 @@ def extended_payload():
 
 
 def test_parse_extended_status_buds2pro():
-    state = gb.parse_extended_status(extended_payload(), gb.PROFILES["buds2pro"])
+    state = gb.parse_extended_status(extended_payload(), profile("buds2pro"))
     assert state["noise"] == "ambient"
     assert state["battery"] == {"left": 97, "right": 95, "case": 80}
     assert state["wearing"] == {"left": 1, "right": 1}
@@ -85,24 +92,100 @@ def test_unknown_model_hides_spatial_but_keeps_the_rest():
 
 def test_parse_status():
     payload = bytes([5, 90, 88, 1, 0, 0x11, 70, 0x10])
-    state = gb.parse_status(payload)
+    state = gb.parse_status(payload, profile("buds2pro"))
     assert state["battery"] == {"left": 90, "right": 88, "case": 70}
     assert state["charging"] == {"left": True, "right": False, "case": False}
 
 
 def test_touchpad_locked_when_high_bit_clear():
-    assert gb.parse_touch(0x0F)["enabled"] is False
-    assert gb.parse_touch(0x8F)["enabled"] is True
+    assert gb.parse_touch(0x0F, "bits7")["enabled"] is False
+    assert gb.parse_touch(0x8F, "bits7")["enabled"] is True
+    # Older models send one flag, and it means the opposite.
+    assert gb.parse_touch(1, "byte")["enabled"] is False
+    assert gb.parse_touch(0, "byte")["enabled"] is True
 
 
 def test_device_id_resolves_to_profile():
-    uuids = ["0000110b-0000-1000-8000-00805f9b34fb",
-             "d908aab5-7a90-4cbe-8641-86a553db0146"]
-    device_id = gb.device_id_from_uuids(uuids)
-    assert device_id == 326
-    assert gb.profile_for_device_id(device_id)[0] == "buds2pro"
-    assert gb.profile_for_device_id(341)[0] == "buds3pro"
-    assert gb.profile_for_device_id(999)[0] == "unknown"
+    uuids = [gb.SPP_NEW, "d908aab5-7a90-4cbe-8641-86a553db0146"]
+    assert gb.device_id_from_uuids(uuids) == 326
+    assert gb.profile_for(uuids, "renamed by its owner")["name"] == "buds2pro"
+
+
+def test_older_models_are_matched_by_name():
+    # Buds+ and friends publish no device id, only plain SPP.
+    assert gb.profile_for([gb.SPP_STANDARD], "Galaxy Buds+ (1A2B)")["name"] == "budsplus"
+    assert gb.profile_for([gb.SPP_STANDARD], "Buds Live (7C3D)")["name"] == "budslive"
+    assert gb.profile_for([gb.SPP_LEGACY], "Galaxy Buds (9F11)")["name"] == "buds"
+    # "Buds2 Pro" must not be swallowed by the "Buds2" row.
+    assert gb.profile_for([gb.SPP_NEW], "Buds2 Pro (0A0A)")["name"] == "buds2pro"
+    assert gb.profile_for([gb.SPP_NEW], "Buds3 Pro (0A0A)")["name"] == "buds3pro"
+
+
+def test_plain_spp_devices_are_not_mistaken_for_earbuds():
+    assert gb.looks_like_earbuds([gb.SPP_STANDARD], "Keychron K6 Pro") is False
+    assert gb.looks_like_earbuds([gb.SPP_STANDARD], "Galaxy Buds+ (1A2B)") is True
+    assert gb.looks_like_earbuds([gb.SPP_NEW], "renamed") is True
+
+
+def budsplus_payload():
+    """Buds+ layout: ambient is a flag at 8, touch lock a byte at 12, and
+    quick connect only exists from revision 11."""
+    payload = bytearray(24)
+    payload[0] = 12     # revision
+    payload[2] = 70     # battery left
+    payload[3] = 68     # battery right
+    payload[6] = 0x11   # both worn
+    payload[7] = 55     # battery case
+    payload[8] = 1      # ambient sound on
+    payload[12] = 0     # touchpad unlocked
+    payload[21] = 0     # quick connect on
+    return bytes(payload)
+
+
+def test_parse_extended_status_budsplus():
+    state = gb.parse_extended_status(budsplus_payload(), profile("budsplus"))
+    assert state["noise"] == "ambient"
+    assert state["battery"] == {"left": 70, "right": 68, "case": 55}
+    assert state["touch"]["enabled"] is True
+    assert state["seamless"] is True
+    # No 360 Audio on this model: hidden, not guessed.
+    assert "spatial" not in state
+
+
+def test_budsplus_hides_quick_connect_on_old_firmware():
+    payload = bytearray(budsplus_payload())
+    payload[0] = 9  # revision below the one that reports it
+    state = gb.parse_extended_status(bytes(payload), profile("budsplus"))
+    assert "seamless" not in state
+
+
+def test_original_buds_have_no_case_battery():
+    payload = bytearray(20)
+    payload[2], payload[3] = 60, 58
+    payload[6] = 3   # legacy wear state: both
+    payload[7] = 1   # ambient on
+    state = gb.parse_extended_status(bytes(payload), profile("buds"))
+    assert state["battery"] == {"left": 60, "right": 58}
+    assert state["wearing"] == {"left": 1, "right": 1}
+    assert state["noise"] == "ambient"
+
+
+def test_noise_command_per_model():
+    # Three modes on the newer models...
+    assert gb.noise_command("controls", "ambient") == (gb.MSG_NOISE_CONTROLS, bytes([2]))
+    # ...ambient sound is a plain toggle on Buds and Buds+...
+    assert gb.noise_command("ambient", "ambient") == (gb.MSG_SET_AMBIENT_MODE, bytes([1]))
+    assert gb.noise_command("ambient", "off") == (gb.MSG_SET_AMBIENT_MODE, bytes([0]))
+    # ...and Buds Live only has ANC on/off.
+    assert gb.noise_command("anc", "anc") == (gb.MSG_SET_NOISE_REDUCTION, bytes([1]))
+
+
+def test_legacy_framing_round_trip():
+    frame = gb.encode(gb.MSG_SET_AMBIENT_MODE, bytes([1]), legacy=True)
+    assert frame[0] == gb.LEGACY_SOM and frame[-1] == gb.LEGACY_EOM
+    assert frame[1] == 0 and frame[2] == 4  # type byte, then size byte
+    messages, rest = gb.decode(frame, legacy=True)
+    assert messages == [(gb.MSG_SET_AMBIENT_MODE, bytes([1]))] and rest == b""
 
 
 def test_lock_payload_restores_gestures():
@@ -115,8 +198,30 @@ def test_lock_payload_restores_gestures():
     assert gb.lock_payload("byte", False, touch) == bytes([1])
 
 
+def test_cycle_wraps_through_the_models_modes_two_mode_model():
+    daemon = gb.Daemon()
+    daemon.profile = profile("budsplus")
+    daemon.state.update({"modes": ["off", "ambient"], "noise": "ambient"})
+    sent = []
+    daemon.send = lambda msg_id, payload=b"": sent.append((msg_id, payload))
+    daemon.emit = lambda: None
+    daemon.command('{"cmd":"cycle"}')
+    assert sent == [(gb.MSG_SET_AMBIENT_MODE, bytes([0]))]
+
+
+def test_unsupported_toggles_are_ignored():
+    daemon = gb.Daemon()
+    daemon.profile = profile("budsplus")
+    daemon.emit = lambda: None
+    sent = []
+    daemon.send = lambda *a, **k: sent.append(a)
+    daemon.command('{"cmd":"spatial","value":true}')
+    assert sent == []
+
+
 def test_cycle_wraps_through_the_models_modes():
     daemon = gb.Daemon()
+    daemon.profile = profile("buds2pro")
     daemon.state.update({"modes": ["off", "anc", "ambient"], "noise": "ambient"})
     sent = []
     daemon.send = lambda msg_id, payload=b"": sent.append((msg_id, payload))
@@ -142,6 +247,7 @@ def test_ack_applies_the_value_the_earbuds_report():
 
 def test_commands_do_not_guess_state_before_the_ack():
     daemon = gb.Daemon()
+    daemon.profile = profile("buds2pro")
     daemon.emit = lambda: None
     daemon.send = lambda *a, **k: None
     daemon.command('{"cmd":"spatial","value":true}')
@@ -152,6 +258,8 @@ def test_stdin_handles_two_commands_arriving_together():
     import os
     read_fd, write_fd = os.pipe()
     daemon = gb.Daemon()
+    daemon.profile = profile("buds2pro")
+    daemon.state["modes"] = ["off", "anc", "ambient"]
     daemon.emit = lambda: None
     sent = []
     daemon.send = lambda msg_id, payload=b"": sent.append(payload)
@@ -164,6 +272,7 @@ def test_stdin_handles_two_commands_arriving_together():
 
 def test_seamless_is_inverted_on_the_wire():
     daemon = gb.Daemon()
+    daemon.profile = profile("buds2pro")
     sent = []
     daemon.send = lambda msg_id, payload=b"": sent.append((msg_id, payload))
     daemon.emit = lambda: None
