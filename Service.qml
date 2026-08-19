@@ -24,6 +24,7 @@ QtObject {
   function setNoise(mode) { send({"cmd": "noise", "value": mode}) }
   function cycle() { send({"cmd": "cycle"}) }
   function setToggle(name, value) { send({"cmd": name, "value": value}) }
+  function setCodec(profile) { send({"cmd": "codec", "value": profile}) }
 
   function applyLine(line) {
     var text = String(line || "").trim()
@@ -66,6 +67,7 @@ QtObject {
     function cycle(): void { root.cycle() }
     function set(mode: string): void { root.setNoise(mode) }
     function status(): string { return JSON.stringify(root.state) }
+    function codec(profile: string): void { root.setCodec(profile) }
     function open(): void { if (root.shell) root.shell.summon(root.pluginId, "{}") }
     function close(): void { if (root.shell) root.shell.hide(root.pluginId) }
     function toggle(): void { if (root.shell) root.shell.toggle(root.pluginId, "{}") }

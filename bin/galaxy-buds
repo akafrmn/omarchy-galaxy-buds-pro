@@ -14,6 +14,7 @@ Needs the system python: dbus-python and PyGObject live there, not in brew's.
 import json
 import os
 import struct
+import subprocess
 import sys
 
 DEBUG = bool(os.environ.get("GALAXY_BUDS_DEBUG"))
@@ -82,37 +83,37 @@ PROFILES = [
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("byte", 10),
      "seamless": (19, 0), "spatial": (28, 2)},
 
-    {"name": "buds2pro", "ids": tuple(range(325, 329)), "match": ("Buds2 Pro",),
+    {"name": "buds2pro", "charging": True, "ids": tuple(range(325, 329)), "match": ("Buds2 Pro",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "spatial": (35, 1)},
 
-    {"name": "buds2", "ids": tuple(range(313, 322)) + (14337,), "match": ("Buds2",),
+    {"name": "buds2", "charging": True, "ids": tuple(range(313, 322)) + (14337,), "match": ("Buds2",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "spatial": (35, 8)},
 
-    {"name": "budscore", "ids": (322, 323), "match": ("Buds Core",),
+    {"name": "budscore", "charging": True, "ids": (322, 323), "match": ("Buds Core",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "spatial": None},
 
-    {"name": "budsfe", "ids": (330, 331), "match": ("Buds FE",),
+    {"name": "budsfe", "charging": True, "ids": (330, 331), "match": ("Buds FE",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "spatial": (35, 0)},
 
-    {"name": "buds3pro", "ids": (340, 341), "match": ("Buds3 Pro",),
+    {"name": "buds3pro", "charging": True, "ids": (340, 341), "match": ("Buds3 Pro",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "spatial": (35, 0)},
 
-    {"name": "buds3fe", "ids": (347, 348), "match": ("Buds3 FE",),
+    {"name": "buds3fe", "charging": True, "ids": (347, 348), "match": ("Buds3 FE",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "spatial": None},
 
-    {"name": "buds3", "ids": (333, 334), "match": ("Buds3",),
+    {"name": "buds3", "charging": True, "ids": (333, 334), "match": ("Buds3",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "spatial": (35, 0)},
@@ -121,11 +122,12 @@ PROFILES = [
 # Anything newer than this file knows about: the noise byte and the touch
 # bitmask have sat still since Buds Live, so those still work. 360 Audio moved
 # around between models, so it is hidden rather than read from the wrong byte.
-UNKNOWN_PROFILE = {"name": "unknown", "ids": (), "match": (), "uuid": SPP_NEW,
+UNKNOWN_PROFILE = {"name": "unknown", "ids": (), "match": (), "uuid": SPP_NEW, "charging": True,
                    "modes": ("off", "anc", "ambient"), "noise": ("controls", 12),
                    "touch": ("bits7", 10), "seamless": (19, 0), "spatial": None}
 
-DEFAULTS = {"legacy_frame": False, "wearing": "nibbles", "case_battery": True}
+DEFAULTS = {"legacy_frame": False, "wearing": "nibbles", "case_battery": True,
+            "charging": False}
 
 
 def profile_get(profile, key):
@@ -234,12 +236,21 @@ def looks_like_earbuds(uuids, name):
     return profile_for(uuids, name) is not UNKNOWN_PROFILE
 
 
-def pick_device(candidates):
-    """With two pairs paired -- a Buds+ in a drawer and a Buds2 Pro in your
-    ears -- the connected one is the one being asked about."""
-    for path, device in candidates:
-        if device.get("Connected", False):
-            return path, device
+def pick_device(candidates, default_address=""):
+    """Which pair the panel is about, when more than one is paired.
+
+    The one you are listening through wins: with two pairs connected at once,
+    the audio output is the one you mean to control. Falling back to merely
+    connected keeps the panel useful when the earbuds are on but the sound is
+    coming out of the speakers."""
+    connected = [(path, device) for path, device in candidates
+                 if device.get("Connected", False)]
+    if default_address:
+        for path, device in connected:
+            if str(device.get("Address", "")).upper() == default_address:
+                return path, device
+    if connected:
+        return connected[0]
     # Nothing connected: still return one so the panel can say which pair it
     # is waiting for rather than claiming nothing is paired.
     return candidates[0] if candidates else (None, None)
@@ -324,7 +335,9 @@ def parse_status(payload, profile):
              "wearing": parse_wearing(payload[5], profile_get(profile, "wearing"))}
     if profile_get(profile, "case_battery") and len(payload) > 6:
         state["battery"]["case"] = payload[6]
-    if len(payload) > 7:
+    # Only Buds2 and newer report what is charging; on older models that byte
+    # is something else entirely.
+    if profile_get(profile, "charging") and len(payload) > 7:
         charging = payload[7]
         state["charging"] = {"left": bool(charging & 0x10), "right": bool(charging & 0x04),
                              "case": bool(charging & 0x01)}
@@ -343,6 +356,55 @@ def lock_payload(shape, enabled, touch):
                  + [int(touch.get("double_call", False)), int(touch.get("hold_call", False))])
 
 
+def pactl(*args):
+    """pactl or nothing: no PipeWire means no codec section, not a crash."""
+    try:
+        result = subprocess.run(("pactl",) + args, capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+def address_from_sink(sink_name):
+    """bluez_output.40_35_E6_0C_B4_A1.1 -> 40:35:E6:0C:B4:A1"""
+    text = str(sink_name or "")
+    if not text.startswith("bluez_output."):
+        return ""
+    mac = text[len("bluez_output."):].split(".")[0]
+    parts = mac.split("_")
+    return ":".join(parts).upper() if len(parts) == 6 else ""
+
+
+def codec_label(profile_name):
+    """a2dp-sink-sbc-xq -> SBC-XQ. Reading the name beats the description,
+    which is translated and worded differently between PipeWire versions."""
+    return profile_name[len("a2dp-sink-"):].upper()
+
+
+def read_codecs(cards_json, address):
+    """The A2DP profiles a card offers are its codecs, one profile each."""
+    card_name = "bluez_card." + address.replace(":", "_")
+    try:
+        cards = json.loads(cards_json or "[]")
+    except ValueError:
+        return None
+    for card in cards:
+        if card.get("name") != card_name:
+            continue
+        active = str(card.get("active_profile") or "")
+        options = []
+        for name, info in (card.get("profiles") or {}).items():
+            if not name.startswith("a2dp-sink"):
+                continue
+            if isinstance(info, dict) and info.get("available") == "no":
+                continue
+            options.append({"value": name, "label": codec_label(name)})
+        options.sort(key=lambda option: option["label"])
+        return {"active": active if active.startswith("a2dp-sink") else "",
+                "card": card_name, "options": options}
+    return None
+
+
 class Daemon:
     def __init__(self, address=""):
         self.address = address.upper()
@@ -354,6 +416,8 @@ class Daemon:
         self.device_path = None
         self.connecting = False
         self.registered = False
+        self.default_address = ""
+        self.codec_card = ""
 
     # ---- output ----------------------------------------------------------
     def emit(self):
@@ -382,7 +446,7 @@ class Daemon:
             elif not looks_like_earbuds(uuids, name):
                 continue
             candidates.append((str(path), device))
-        return pick_device(candidates)
+        return pick_device(candidates, self.default_address)
 
     def connect(self):
         """Retry tick: always returns True so the GLib timer stays alive."""
@@ -414,10 +478,12 @@ class Daemon:
             # Different earbuds: drop the previous pair's battery, mode and
             # toggles instead of showing them under the new name.
             self.state = {"connected": False, "reason": self.state.get("reason", "")}
+            self.codec_card = ""
         self.device_path = path
         self.state["model"] = profile["name"]
         self.state["modes"] = list(profile["modes"])
         self.state["name"] = name
+        self.state["address"] = str(device.get("Address", "")).upper()
 
         # Must be async: BlueZ calls NewConnection back on us while this call is
         # in flight, and a blocking call would sit on the reply until it times
@@ -427,6 +493,25 @@ class Daemon:
             self.profile["uuid"],
             reply_handler=self.on_connect_reply,
             error_handler=self.on_connect_error)
+        return True
+
+    def refresh_audio(self):
+        """Ask PipeWire which output is default and what codecs this card has.
+        Runs on the same slow tick as reconnecting -- a card only appears or
+        changes when earbuds come and go."""
+        self.default_address = address_from_sink(pactl("get-default-sink").strip())
+        address = self.state.get("address", "")
+        if not address:
+            return True
+        codecs = read_codecs(pactl("-f", "json", "list", "cards"), address)
+        is_default = bool(self.default_address) and self.default_address == address
+        changed = {}
+        if codecs != self.state.get("codec"):
+            changed["codec"] = codecs
+        if is_default != self.state.get("is_default_output"):
+            changed["is_default_output"] = is_default
+        if changed:
+            self.update(changed)
         return True
 
     def on_connect_reply(self):
@@ -554,6 +639,11 @@ class Daemon:
         elif name == "seamless" and self.profile["seamless"]:
             # Inverted on the wire: 0 enables it.
             self.send(MSG_SET_SEAMLESS_CONNECTION, bytes([0 if value else 1]))
+        elif name == "codec" and value:
+            card = (self.state.get("codec") or {}).get("card")
+            if card:
+                pactl("set-card-profile", card, str(value))
+                self.refresh_audio()
         elif name == "refresh":
             self.emit()
 
@@ -638,7 +728,9 @@ class Daemon:
                           GLib.IOCondition.IN | GLib.IOCondition.HUP, self.on_stdin)
         GLib.timeout_add_seconds(5, self.register_profile)
         self.connect()
+        self.refresh_audio()
         GLib.timeout_add_seconds(5, self.connect)
+        GLib.timeout_add_seconds(5, self.refresh_audio)
         self.loop.run()
 
 

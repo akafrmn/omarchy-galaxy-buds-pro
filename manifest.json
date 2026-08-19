@@ -17,7 +17,7 @@
   },
   "barWidget": {
     "displayName": "Galaxy Buds",
-    "description": "Switch noise modes, see per-earbud battery, and toggle 360 Audio, touch controls and quick connect. Controls the model does not have are hidden.",
+    "description": "Switch noise modes, watch per-earbud battery and charging, pick the Bluetooth codec, and toggle 360 Audio, touch controls and quick connect. Controls the model does not have are hidden.",
     "category": "Audio",
     "aliases": [
       "buds",
@@ -36,7 +36,7 @@
         "key": "labels",
         "type": "object",
         "label": "Label overrides",
-        "description": "Replace any visible string, e.g. {\"anc\": \"ANC\", \"ambient\": \"Som ambiente\"}. Keys: noiseControl, settings, off, anc, ambient, adaptive, spatial, touch, seamless, left, right, case, disconnected, notPaired, serviceOff.",
+        "description": "Replace any visible string, e.g. {\"anc\": \"ANC\", \"ambient\": \"Som ambiente\"}. Keys: noiseControl, settings, codec, off, anc, ambient, adaptive, spatial, touch, seamless, left, right, case, notOutput, disconnected, notPaired, serviceOff.",
         "defaultValue": {}
       }
     ]

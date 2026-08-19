@@ -2,6 +2,7 @@
 """Protocol checks that need no earbuds. Run: /usr/bin/python3 tests/test_protocol.py"""
 
 import importlib.util
+import json
 import pathlib
 import sys
 from importlib.machinery import SourceFileLoader
@@ -129,6 +130,55 @@ def test_connected_pair_wins_when_two_are_paired():
     # None connected: still name one, so the panel can say what it waits for.
     assert gb.pick_device([idle])[0] == "/org/bluez/hci0/dev_A"
     assert gb.pick_device([]) == (None, None)
+
+
+def test_audio_output_decides_between_two_connected_pairs():
+    plus = ("/dev_A", {"Connected": True, "Address": "AA:BB:CC:DD:EE:FF"})
+    pro = ("/dev_B", {"Connected": True, "Address": "40:35:E6:0C:B4:A1"})
+    # Both in your ears: the one you are listening through is the one you mean.
+    assert gb.pick_device([plus, pro], "40:35:E6:0C:B4:A1")[0] == "/dev_B"
+    # Sound going to the speakers: fall back to whichever is connected.
+    assert gb.pick_device([plus, pro], "")[0] == "/dev_A"
+
+
+def test_address_from_sink_name():
+    assert gb.address_from_sink("bluez_output.40_35_E6_0C_B4_A1.1") == "40:35:E6:0C:B4:A1"
+    assert gb.address_from_sink("alsa_output.pci-0000_04_00.6.HiFi__Speaker__sink") == ""
+    assert gb.address_from_sink(None) == ""
+
+
+def test_read_codecs_lists_a2dp_profiles():
+    cards = json.dumps([
+        {"name": "alsa_card.pci", "profiles": {}},
+        {"name": "bluez_card.40_35_E6_0C_B4_A1",
+         "active_profile": "a2dp-sink-aac",
+         "profiles": {
+             "a2dp-sink-sbc": {"available": "yes"},
+             "a2dp-sink-sbc-xq": {"available": "yes"},
+             "a2dp-sink-aac": {"available": "yes"},
+             "a2dp-sink-ldac": {"available": "no"},
+             "headset-head-unit": {"available": "yes"},
+         }},
+    ])
+    codecs = gb.read_codecs(cards, "40:35:E6:0C:B4:A1")
+    assert codecs["active"] == "a2dp-sink-aac"
+    assert [o["label"] for o in codecs["options"]] == ["AAC", "SBC", "SBC-XQ"]
+    # A different pair's card is not this pair's codec list.
+    assert gb.read_codecs(cards, "AA:BB:CC:DD:EE:FF") is None
+
+
+def test_codec_section_empty_while_on_a_call():
+    cards = json.dumps([{"name": "bluez_card.40_35_E6_0C_B4_A1",
+                         "active_profile": "headset-head-unit",
+                         "profiles": {"a2dp-sink-aac": {"available": "yes"}}}])
+    assert gb.read_codecs(cards, "40:35:E6:0C:B4:A1")["active"] == ""
+
+
+def test_charging_is_only_read_where_the_model_reports_it():
+    payload = bytes([5, 90, 88, 1, 0, 0x11, 70, 0x10])
+    assert gb.parse_status(payload, profile("buds2pro"))["charging"]["left"] is True
+    # Buds+ puts something else in that byte.
+    assert "charging" not in gb.parse_status(payload, profile("budsplus"))
 
 
 def test_plain_spp_devices_are_not_mistaken_for_earbuds():

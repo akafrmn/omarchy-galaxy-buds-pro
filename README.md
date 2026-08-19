@@ -11,6 +11,11 @@ Controls the model does not have are hidden rather than shown dead — a Buds+
 has no ANC and no 360 Audio, so it gets an ambient-sound switch and nothing
 about spatial audio.
 
+It also picks the **Bluetooth codec** (the A2DP profiles PipeWire offers for
+that card), shows a bolt on whatever is charging, and — when two pairs are
+connected at once — controls the pair sound is actually going to, saying so
+when the pair on screen is not the audio output.
+
 ## Install
 
 ```bash
@@ -84,24 +89,34 @@ Every key is optional; anything you leave out keeps its English text.
 | `noiseControl` | Noise control |
 | `settings` | Settings |
 | `off` / `anc` / `ambient` / `adaptive` | Off / ANC / Ambient / Adaptive |
+| `codec` | Codec |
 | `spatial` | 360 Audio |
 | `touch` | Touch controls |
 | `seamless` | Quick connect |
 | `left` / `right` / `case` | L / R / Case |
+| `notOutput` | Not the audio output |
 | `disconnected` | Disconnected. Take them out of the case to reconnect. |
 | `notPaired` | No Galaxy Buds paired. |
 | `serviceOff` | The plugin service is not running. |
 
 ## Models
 
-| Model | Noise control | 360 Audio | Touch | Quick connect |
-|---|---|---|---|---|
-| Buds (original) | ambient on/off | — | yes | — |
-| Buds+ | ambient on/off | — | yes | firmware 11+ |
-| Buds Live | ANC on/off | firmware 9+ | yes | yes |
-| Buds Pro | off / ANC / ambient | firmware 2+ | yes | yes |
-| Buds2, Buds2 Pro, Buds FE, Buds Core | off / ANC / ambient | most | yes | yes |
-| Buds3, Buds3 Pro, Buds3 FE | off / ANC / ambient | most | yes | yes |
+| Model | Noise control | 360 Audio | Touch | Quick connect | Charging |
+|---|---|---|---|---|---|
+| Buds (original) | ambient on/off | — | yes | — | — |
+| Buds+ | ambient on/off | — | yes | firmware 11+ | — |
+| Buds Live | ANC on/off | firmware 9+ | yes | yes | — |
+| Buds Pro | off / ANC / ambient | firmware 2+ | yes | yes | — |
+| Buds2, Buds2 Pro, Buds FE, Buds Core | off / ANC / ambient | most | yes | yes | yes |
+| Buds3, Buds3 Pro, Buds3 FE | off / ANC / ambient | most | yes | yes | yes |
+
+Battery is reported by every model; the case only reports its own charge while
+the earbuds are sitting in it, so that bar comes and goes. Which earbud is
+charging is only reported from Buds2 on — on older models that byte means
+something else, so no bolt is shown rather than a guessed one.
+
+The codec list comes from PipeWire, not from the earbuds, so it works the same
+on every model. If you already run the `bt.codecs` plugin, this replaces it.
 
 Tested on **Galaxy Buds2 Pro** and **Galaxy Buds+**. The rest come from the
 protocol layout and have not been exercised on real hardware.

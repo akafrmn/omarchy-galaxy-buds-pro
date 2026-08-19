@@ -30,6 +30,12 @@ Panel {
   readonly property bool hasSeamless: buds.seamless !== undefined
   readonly property bool hasTouch: touch.enabled !== undefined
   readonly property bool hasModes: modes.length > 1
+  readonly property var charging: buds.charging || ({})
+  readonly property var codec: buds.codec || ({})
+  readonly property var codecOptions: codec.options || []
+  // Two pairs can be connected at once; this says whether the one being shown
+  // is the one sound is actually going to.
+  readonly property bool isAudioOutput: buds.is_default_output === true
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
@@ -68,12 +74,12 @@ Panel {
     var rows = []
     if (!connected) return rows
     if (battery.left !== undefined)
-      rows.push({label: t("left", "L"), value: battery.left})
+      rows.push({label: t("left", "L"), value: battery.left, charging: charging.left === true})
     if (battery.right !== undefined)
-      rows.push({label: t("right", "R"), value: battery.right})
-    // The case only reports while the earbuds sit in it.
+      rows.push({label: t("right", "R"), value: battery.right, charging: charging.right === true})
+    // The case only reports its own charge while the earbuds sit in it.
     if (battery.case > 0)
-      rows.push({label: t("case", "Case"), value: battery.case})
+      rows.push({label: t("case", "Case"), value: battery.case, charging: charging.case === true})
     return rows
   }
 
@@ -175,18 +181,35 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
           }
 
-          Text {
-            id: heroName
-            text: root.deviceName
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.title
-            font.bold: true
-            elide: Text.ElideRight
+          Column {
             anchors.left: heroIcon.right
             anchors.leftMargin: Style.space(14)
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+
+            Text {
+              id: heroName
+              text: root.deviceName
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+              elide: Text.ElideRight
+              width: parent.width
+            }
+
+            Text {
+              // Worth saying out loud: with two pairs connected it is easy to
+              // change the mode on the one you are not listening to.
+              visible: root.connected && !root.isAudioOutput
+              text: root.t("notOutput", "Not the audio output")
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+              width: parent.width
+            }
           }
         }
 
@@ -237,12 +260,14 @@ Panel {
 
               Text {
                 id: cellValue
-                text: modelData.value + "%"
+                // The bolt reads as "this number is going up", which is the
+                // whole point of showing it while an earbud sits in the case.
+                text: (modelData.charging ? "󰂄 " : "") + modelData.value + "%"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 horizontalAlignment: Text.AlignRight
-                width: Style.space(34)
+                width: Style.space(52)
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
               }
@@ -316,6 +341,27 @@ Panel {
               onHovered: function(on) { if (on) root.selectCursor(index + 1) }
               onToggled: root.setToggle(modelData.key, !modelData.checked)
             }
+          }
+        }
+
+        PanelSectionHeader {
+          width: parent.width
+          text: root.t("codec", "Codec")
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          visible: root.codecOptions.length > 1
+        }
+
+        ButtonGroup {
+          id: codecGroup
+          width: parent.width
+          options: root.codecOptions
+          value: String(root.codec.active || "")
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          visible: root.codecOptions.length > 1
+          onChanged: function(value) {
+            if (root.service) root.service.setCodec(value)
           }
         }
 
