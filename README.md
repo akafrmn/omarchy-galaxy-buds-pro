@@ -1,5 +1,7 @@
 # Galaxy Buds — Omarchy plugin
 
+![The Galaxy Buds panel](preview.png)
+
 Noise control for Samsung Galaxy Buds in the Omarchy bar. Click the ear icon to
 switch noise modes, see the battery of each earbud as a bar, and toggle
 **360 Audio**, **touch controls** and **quick connect**.
@@ -16,17 +18,67 @@ that card), shows a bolt on whatever is charging, and — when two pairs are
 connected at once — controls the pair sound is actually going to, saying so
 when the pair on screen is not the audio output.
 
+![The bar icon, showing ANC is on](docs/bar.png)
+
+## Requirements
+
+- Omarchy 4 (the Quickshell-based `omarchy-shell`)
+- A pair of Galaxy Buds already paired in Bluetooth
+- The system Python at `/usr/bin/python3` with `dbus-python` and `PyGObject`
+  (`python-dbus` and `python-gobject` on Arch — both are already present on a
+  stock Omarchy install)
+- PipeWire with `pactl`, for the codec row only; without it every other feature
+  still works
+
+No other packages, no daemon to install, no `sudo`.
+
 ## Install
 
+Review the repository, then add the plugin:
+
 ```bash
-git clone https://github.com/aislandener/galaxy-buds-control.git
-ln -s "$PWD/galaxy-buds-control" ~/.config/omarchy/plugins/aislandener.galaxy-buds
-omarchy-shell shell rescanPlugins
-omarchy plugin enable aislandener.galaxy-buds
+omarchy plugin add https://github.com/aislandener/galaxy-buds-control.git
 ```
 
-The earbuds must already be paired. Nothing else to configure — the model is
-detected from the Bluetooth device id.
+Accept the prompt to enable the plugin during installation.
+
+For an unattended install from a repository you already trust:
+
+```bash
+omarchy plugin add https://github.com/aislandener/galaxy-buds-control.git --enable --yes
+```
+
+The widget lands in the right bar section. Put it next to the audio panel with:
+
+```bash
+omarchy bar move aislandener.galaxy-buds --before omarchy.audio
+```
+
+Nothing else to configure — the model is detected from the Bluetooth device id
+or, on older models, from its name.
+
+## Update
+
+Review and apply the next fast-forward update:
+
+```bash
+omarchy plugin update aislandener.galaxy-buds
+```
+
+Or update all Git-managed plugins:
+
+```bash
+omarchy plugin update --all
+```
+
+## Uninstall
+
+```bash
+omarchy plugin remove aislandener.galaxy-buds
+```
+
+Removing the plugin stops its helper and leaves nothing behind: it writes no
+files of its own, and the earbuds keep whatever mode they were last set to.
 
 ## Keybinds
 
@@ -40,6 +92,31 @@ bind = SUPER SHIFT, N, exec, omarchy-shell aislandener.galaxy-buds set anc
 
 `cycle`, `set <off|anc|ambient>`, `open`, `close`, `toggle` and `status` are
 available. Never call `bin/galaxy-buds` directly for this — see below.
+
+## What it does on your system
+
+Everything this plugin does, in full:
+
+- **Bluetooth**: registers an `org.bluez.Profile1` client on the system D-Bus
+  and opens one RFCOMM socket to the earbuds, to read their state and send the
+  commands the panel offers. It talks to no other device.
+- **Commands it runs**: `/usr/bin/python3` (its own helper, from this
+  repository) and `pactl` (to list cards and sinks, and to set a card profile
+  when you pick a codec).
+- **Files**: none. It writes nothing and reads nothing outside its own
+  repository.
+- **Network**: none.
+- **Background**: one helper process, started and stopped with the shell.
+- **IPC**: registers the `aislandener.galaxy-buds` shell IPC target with
+  `open`, `close`, `toggle`, `cycle`, `set <mode>`, `codec <profile>` and
+  `status`. Keybindings are yours to define; the plugin adds none.
+- **User configuration**: none required. Optional label overrides live in your
+  own `shell.json` entry, and the plugin never writes to it.
+
+## Security
+
+This plugin runs unsandboxed inside `omarchy-shell` when enabled. Review its
+source and the behavior documented above before installing it.
 
 ## How it works
 
@@ -148,10 +225,21 @@ A model the table does not know still gets noise control and battery — those
 bytes have not moved since Buds Live — and hides 360 Audio rather than reading
 a byte that means something else on that firmware.
 
+## Validate from source
+
+```bash
+omarchy plugin validate .
+```
+
 ## Tests
 
 ```bash
 /usr/bin/python3 tests/test_protocol.py
 ```
 
-Framing, CRC, status parsing and command encoding, all without earbuds.
+Framing, CRC, per-model status parsing, command encoding, codec discovery and
+device selection — all without earbuds.
+
+## License
+
+[MIT](LICENSE)
