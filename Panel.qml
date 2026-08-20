@@ -144,7 +144,10 @@ Panel {
     // Codec buttons sit in one row, so the popover has to grow with them
     // rather than let the last one run past its edge.
     contentWidth: panel.fittedContentWidth(Style.space(root.codecOptions.length > 2 ? 400 : 320))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(420))
+    // The cap only exists to stop a runaway panel; the real limit is the
+    // screen. 420 cut the codec row off once battery, modes, three toggles and
+    // codecs were all on screen at once.
+    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(620))
 
     PanelKeyCatcher {
       id: keyCatcher
