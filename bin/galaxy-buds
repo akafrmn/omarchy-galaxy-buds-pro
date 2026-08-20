@@ -542,6 +542,13 @@ class Daemon:
         Runs on the same slow tick as reconnecting -- a card only appears or
         changes when earbuds come and go."""
         self.default_address = address_from_sink(pactl("get-default-sink").strip())
+        if self.should_retarget():
+            # Switching the audio output to the other pair is how you say which
+            # pair you mean. Hand the link over instead of staying on the one
+            # that happened to connect first.
+            self.disconnect()
+            self.connect()
+            return True
         address = self.state.get("address", "")
         if not address:
             return True
@@ -556,6 +563,16 @@ class Daemon:
         if changed:
             self.update(changed)
         return True
+
+    def should_retarget(self):
+        """True when the audio output moved to a different pair that is
+        connected and ready to take the link."""
+        if not self.socket or not self.default_address:
+            return False
+        if self.default_address == self.state.get("address", ""):
+            return False
+        path, device = self.find_device(self.bus)
+        return bool(path) and str(device.get("Address", "")).upper() == self.default_address
 
     def on_connect_reply(self):
         self.connecting = False

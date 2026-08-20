@@ -141,6 +141,31 @@ def test_audio_output_decides_between_two_connected_pairs():
     assert gb.pick_device([plus, pro], "")[0] == "/dev_A"
 
 
+def test_link_moves_to_whichever_pair_the_sound_goes_to():
+    daemon = gb.Daemon()
+    daemon.bus = None
+    daemon.socket = object()          # already holding a link
+    daemon.state["address"] = "AA:BB:CC:DD:EE:FF"
+    daemon.find_device = lambda bus: ("/dev_B", {"Address": "40:35:E6:0C:B4:A1", "Connected": True})
+
+    # Output switched to the other pair, and that pair is connected: hand over.
+    daemon.default_address = "40:35:E6:0C:B4:A1"
+    assert daemon.should_retarget() is True
+
+    # Output is the pair we already hold: stay.
+    daemon.default_address = "AA:BB:CC:DD:EE:FF"
+    assert daemon.should_retarget() is False
+
+    # Sound is coming out of the speakers: keep controlling what we have.
+    daemon.default_address = ""
+    assert daemon.should_retarget() is False
+
+    # Output names a pair that is not there: do not drop a working link for it.
+    daemon.default_address = "99:99:99:99:99:99"
+    daemon.find_device = lambda bus: (None, None)
+    assert daemon.should_retarget() is False
+
+
 def test_address_from_sink_name():
     assert gb.address_from_sink("bluez_output.40_35_E6_0C_B4_A1.1") == "40:35:E6:0C:B4:A1"
     assert gb.address_from_sink("alsa_output.pci-0000_04_00.6.HiFi__Speaker__sink") == ""
