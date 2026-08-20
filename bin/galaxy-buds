@@ -13,6 +13,7 @@ Needs the system python: dbus-python and PyGObject live there, not in brew's.
 
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -384,14 +385,35 @@ CODEC_LABELS = {
     "faststream": "FastStream", "faststream_duplex": "FastStream duplex",
     "lc3": "LC3", "opus_05": "Opus", "opus_05_duplex": "Opus duplex",
     "opus_05_pro": "Opus Pro",
+    # Call codecs, used while something holds the microphone.
+    "msbc": "mSBC", "cvsd": "CVSD", "lc3_swb": "LC3-SWB",
 }
 
+# The two profile families: music, and the low quality mode with a microphone
+# that PipeWire switches to when an app opens one.
+A2DP_PREFIX = "a2dp-sink"
+HEADSET_PREFIX = "headset-head-unit"
 
-def codec_label(profile_name):
-    """a2dp-sink-sbc_xq -> SBC-XQ. Reading the name beats the description,
-    which is translated and worded differently between PipeWire versions."""
-    codec = profile_name[len("a2dp-sink-"):]
+
+def pretty_codec(codec):
+    codec = str(codec or "").lower()
     return CODEC_LABELS.get(codec, codec.replace("_", "-").upper())
+
+
+def codec_label(profile_name, description=""):
+    """What to write on the button.
+
+    The codec is in the profile name for every A2DP profile and for some
+    headset ones, but plain "headset-head-unit" is mSBC and only says so in its
+    description -- which is translated, so only the codec word is read from it."""
+    for prefix in (A2DP_PREFIX + "-", HEADSET_PREFIX + "-"):
+        if profile_name.startswith(prefix):
+            return pretty_codec(profile_name[len(prefix):])
+    match = re.search(r"codec ([A-Za-z0-9_.-]+)", str(description or ""))
+    if match:
+        return pretty_codec(match.group(1).rstrip(")"))
+    # The generic A2DP profile negotiates its codec, so it has none to name.
+    return "Auto" if profile_name == A2DP_PREFIX else ""
 
 
 def active_codec(sinks_json, address):
@@ -410,14 +432,17 @@ def active_codec(sinks_json, address):
 
 
 def read_codecs(cards_json, sinks_json, address):
-    """Codec choices for a card: let PipeWire negotiate the best one, or pin a
-    specific profile.
+    """Codec choices for a card, for whichever mode it is in.
 
-    "a2dp-sink" is the automatic profile -- it has no codec in its name because
-    it picks one, usually the best both ends support. The a2dp-sink-<codec>
-    profiles pin that codec instead. Listing only the pinned ones hides the very
-    codec in use: a pair running on AAC through the automatic profile has no
-    a2dp-sink-aac to show."""
+    "a2dp-sink" is the automatic music profile -- it has no codec in its name
+    because it picks one, usually the best both ends support; a2dp-sink-<codec>
+    pins that codec instead. Listing only the pinned ones hides the very codec
+    in use: a pair running AAC through the automatic profile has no
+    a2dp-sink-aac to show.
+
+    When an app opens the microphone, PipeWire switches the card to a headset
+    profile and the music codecs stop being choices at all -- so the row follows
+    the mode the card is in and offers the call codecs instead."""
     card_name = "bluez_card." + address.replace(":", "_")
     try:
         cards = json.loads(cards_json or "[]")
@@ -428,21 +453,25 @@ def read_codecs(cards_json, sinks_json, address):
             continue
         active = str(card.get("active_profile") or "")
         profiles = card.get("profiles") or {}
+        family = HEADSET_PREFIX if active.startswith(HEADSET_PREFIX) else A2DP_PREFIX
+
         options = []
         for name, info in profiles.items():
-            if not name.startswith("a2dp-sink-"):
+            if not name.startswith(family):
                 continue
             if isinstance(info, dict) and info.get("available") == "no":
                 continue
-            options.append({"value": name, "label": codec_label(name)})
-        options.sort(key=lambda option: option["label"])
-        if "a2dp-sink" in profiles:
-            options.insert(0, {"value": "a2dp-sink", "label": "Auto"})
+            label = codec_label(name, isinstance(info, dict) and info.get("description") or "")
+            if not label:
+                continue
+            options.append({"value": name, "label": label})
+        options.sort(key=lambda option: (option["value"] != family, option["label"]))
 
         codec = active_codec(sinks_json, address)
         return {"card": card_name,
-                "active": active if active.startswith("a2dp-sink") else "",
-                "codec": CODEC_LABELS.get(codec, codec.replace("_", "-").upper()),
+                "active": active if active.startswith(family) else "",
+                "codec": pretty_codec(codec),
+                "mode": "headset" if family == HEADSET_PREFIX else "a2dp",
                 "options": options}
     return None
 

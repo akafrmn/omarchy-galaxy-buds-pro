@@ -352,8 +352,10 @@ Panel {
         PanelSectionHeader {
           width: parent.width
           // The automatic profile does not say which codec it settled on, and
-          // that is the one thing worth knowing here.
-          text: root.t("codec", "Codec") + (root.codec.codec ? "  ·  " + root.codec.codec : "")
+          // that is the one thing worth knowing here. The mic glyph explains
+          // why the music codecs are gone: something is holding the microphone.
+          text: root.t("codec", "Codec")
+                + (root.codec.codec ? "  ·  " + (root.codec.mode === "headset" ? "󰍬 " : "") + root.codec.codec : "")
           foreground: root.foreground
           fontFamily: root.fontFamily
           visible: root.codecOptions.length > 1

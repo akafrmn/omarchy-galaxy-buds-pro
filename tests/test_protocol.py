@@ -181,9 +181,21 @@ CARDS = json.dumps([
          "a2dp-sink-sbc": {"available": "yes"},
          "a2dp-sink-sbc_xq": {"available": "yes"},
          "a2dp-sink-ldac": {"available": "no"},
-         "headset-head-unit": {"available": "yes"},
+         "headset-head-unit": {"available": "yes",
+                               "description": "Headset Head Unit (HSP/HFP, codec MSBC)"},
+         "headset-head-unit-cvsd": {"available": "yes"},
      }},
 ])
+
+
+def in_call(cards_json):
+    """Same card, switched to the microphone profile the way PipeWire does
+    when an app opens one."""
+    cards = json.loads(cards_json)
+    for card in cards:
+        if card["name"].startswith("bluez_card"):
+            card["active_profile"] = "headset-head-unit"
+    return json.dumps(cards)
 
 SINKS = json.dumps([
     {"name": "bluez_output.40_35_E6_0C_B4_A1.1",
@@ -195,6 +207,7 @@ def test_read_codecs_offers_auto_and_the_pinned_profiles():
     codecs = gb.read_codecs(CARDS, SINKS, "40:35:E6:0C:B4:A1")
     # Auto first: it is the profile that picks the best codec both ends support.
     assert [o["label"] for o in codecs["options"]] == ["Auto", "SBC", "SBC-XQ"]
+    assert codecs["mode"] == "a2dp"
     assert codecs["options"][0]["value"] == "a2dp-sink"
     # An unavailable profile is not an option.
     assert "LDAC" not in [o["label"] for o in codecs["options"]]
@@ -221,11 +234,24 @@ def test_codec_labels_are_written_the_way_people_say_them():
     assert gb.codec_label("a2dp-sink-brand_new") == "BRAND-NEW"
 
 
-def test_codec_section_empty_while_on_a_call():
-    cards = json.dumps([{"name": "bluez_card.40_35_E6_0C_B4_A1",
-                         "active_profile": "headset-head-unit",
-                         "profiles": {"a2dp-sink-aac": {"available": "yes"}}}])
-    assert gb.read_codecs(cards, SINKS, "40:35:E6:0C:B4:A1")["active"] == ""
+def test_call_codecs_replace_the_music_ones_while_the_mic_is_open():
+    codecs = gb.read_codecs(in_call(CARDS), SINKS, "40:35:E6:0C:B4:A1")
+    # The music codecs are not choices at all in this mode.
+    assert [o["label"] for o in codecs["options"]] == ["mSBC", "CVSD"]
+    assert codecs["mode"] == "headset"
+    assert codecs["active"] == "headset-head-unit"
+
+
+def test_headset_codec_is_read_from_the_description():
+    # Plain "headset-head-unit" is mSBC, and only its description says so.
+    assert gb.codec_label("headset-head-unit",
+                          "Headset Head Unit (HSP/HFP, codec MSBC)") == "mSBC"
+    # Translated descriptions keep the codec word.
+    assert gb.codec_label("headset-head-unit",
+                          "Unidade de headset (HSP/HFP, codec MSBC)") == "mSBC"
+    assert gb.codec_label("headset-head-unit-cvsd") == "CVSD"
+    # No codec anywhere and not the generic A2DP profile: nothing to label.
+    assert gb.codec_label("headset-head-unit", "") == ""
 
 
 def test_charging_is_only_read_where_the_model_reports_it():

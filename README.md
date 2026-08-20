@@ -129,6 +129,13 @@ buttons pin a specific codec instead.
 A codec only appears when both the earbuds and PipeWire offer it. AAC needs
 `libfdk-aac` installed; a pair that never negotiates AAC will not list it.
 
+**While something holds the microphone** — a call in Discord, say — PipeWire
+switches the card to a headset profile, where the music codecs are not choices
+at all. The row follows that: it offers the call codecs (mSBC, CVSD) and the
+header marks the mode with a mic glyph, so the music codecs going away reads as
+"you are on a call" rather than "they disappeared". PipeWire switches back on
+its own when the microphone is released.
+
 Tested on **Galaxy Buds2 Pro** and **Galaxy Buds+**. The rest come from the
 protocol layout and have not been exercised on real hardware.
 
