@@ -30,7 +30,8 @@ when the pair on screen is not the audio output.
 - PipeWire with `pactl`, for the codec row only; without it every other feature
   still works
 
-No other packages, no daemon to install, no `sudo`.
+No other packages, no daemon to install, and nothing that asks for root:
+it runs entirely as your own user.
 
 ## Install
 
@@ -103,6 +104,7 @@ Everything this plugin does, in full:
 - **Commands it runs**: `/usr/bin/python3` (its own helper, from this
   repository) and `pactl` (to list cards and sinks, and to set a card profile
   when you pick a codec).
+- **Privileges**: none beyond your own user. It never elevates.
 - **Files**: none. It writes nothing and reads nothing outside its own
   repository.
 - **Network**: none.
