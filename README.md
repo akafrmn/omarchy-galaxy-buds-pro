@@ -23,7 +23,10 @@ when the pair on screen is not the audio output.
 ## Requirements
 
 - Omarchy 4 (the Quickshell-based `omarchy-shell`)
-- A pair of Galaxy Buds already paired in Bluetooth
+- A pair of Galaxy Buds. Not paired yet? Open the panel while disconnected,
+  open the case, hold the touch sensors on both earbuds for about 7 seconds
+  until the light starts flickering, then hit **Search** — the panel finds
+  and pairs them for you.
 - The system Python at `/usr/bin/python3` with `dbus-python` and `PyGObject`
   (`python-dbus` and `python-gobject` on Arch — both are already present on a
   stock Omarchy install)
@@ -156,7 +159,8 @@ widget's entry in `~/.config/omarchy/shell.json`:
     "touch": "Controles de toque",
     "seamless": "Conexão rápida",
     "case": "Estojo",
-    "disconnected": "Desconectado. Tire os fones do estojo para reconectar."
+    "searchHint": "1. Abra o estojo\n2. Segure os sensores de toque dos dois fones por uns 7 segundos, até a luz começar a piscar\n3. Toque em Buscar",
+    "search": "Buscar"
   }
 }
 ```
@@ -174,9 +178,13 @@ Every key is optional; anything you leave out keeps its English text.
 | `seamless` | Quick connect |
 | `left` / `right` / `case` | L / R / Case |
 | `notOutput` | Not the audio output |
-| `disconnected` | Disconnected. Take them out of the case to reconnect. |
-| `notPaired` | No Galaxy Buds paired. |
 | `serviceOff` | The plugin service is not running. |
+| `searchHint` | 1. Open the case. 2. Hold the touch sensors on both earbuds for about 7 seconds, until the light starts flickering. 3. Tap Search. |
+| `search` | Search |
+| `searching` | Searching for Galaxy Buds… |
+| `found` | Found |
+| `pair` | Pair |
+| `connectingDevice` | Connecting… |
 
 ## Models
 
