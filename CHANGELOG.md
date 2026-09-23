@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.3.0] - 2026-09-24
+
+### Added
+- Install firmware updates from the panel, without a phone or Galaxy Wearable: Install, confirm,
+  progress, Cancel. Also `firmwareInstall <build>`, `firmwareCancel`, `firmwareDismiss` over IPC.
+  Verified on a Galaxy Buds3 Pro: R630XXU0AZD2 to R630XXU0AZG2 in about 3 minutes.
+- Enforced in the helper: only the offered build, upgrades only, same model, both buds connected on
+  the same build, 30% battery each, not in the closed case. The image stays in memory and must pass
+  header, size, per-segment CRC32, model name, and every embedded build string equal to the target.
+  Nothing else is sent during a transfer; connection loss, 30 s of silence or Cancel abort it and the
+  earbuds keep their firmware. Success is reported only once they return on the new build.
+
+### Changed
+- The update notice no longer says to use Galaxy Wearable; `firmwareHow` label removed.
+
 ## [2.2.0] - 2026-09-24
 
 ### Added
@@ -72,6 +87,7 @@ First release as `io.github.akafrmn.galaxy-buds-pro`, based on
 - Plugin id is now `io.github.akafrmn.galaxy-buds-pro`. Remove `aislandener.galaxy-buds` before
   installing: only one program can hold the earbuds' control link.
 
+[2.3.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.3.0
 [2.2.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.2.0
 [2.1.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.1.1
 [2.1.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.1.0

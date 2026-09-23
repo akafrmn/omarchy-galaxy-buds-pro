@@ -690,7 +690,7 @@ def make_image(build="R630XXU0AZG2", model=b"SM-R630", segments=((6, 1234), (7, 
         datas.append(body)
     header_size = 12 + 16 * len(segments)
     table, blob, offset = b"", b"", header_size
-    for (seg_id, _), body in zip(segments, datas):
+    for (seg_id, _), body in zip(segments, datas, strict=True):
         table += struct.pack("<iIii", seg_id, zlib.crc32(body), offset, len(body))
         blob += body
         offset += len(body)

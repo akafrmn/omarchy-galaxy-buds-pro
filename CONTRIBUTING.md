@@ -60,8 +60,14 @@ Everything model-specific is one row in `PROFILES` in `bin/galaxy-buds`:
   (`https://fw.timschneeberger.me/v3/firmware/<fw_model>`).
 
 Firmware comes from msg 104 on connect: two prefix bytes, then the left and
-right build as NUL-padded ASCII (`R630XXU0AZD2`). Never add flashing: see the
-README FAQ.
+right build as NUL-padded ASCII (`R630XXU0AZD2`).
+
+Firmware installation (`install_firmware` and `handle_fota` in the helper) is
+the one place a bug can destroy hardware. Rules: every guard lives in
+`flash_preflight` / `verify_firmware_image` in the helper, never only in QML;
+no downgrades, ever; any change needs the simulated-earbud test in
+`tests/test_protocol.py` to still pass byte-exact, plus a new test for the case
+you changed; and say in the pull request which model you flashed it on.
 
 Every row change needs a test in `tests/test_protocol.py`, ideally with a real
 payload captured through `GALAXY_BUDS_DEBUG=1`.

@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.akafrmn.galaxy-buds-pro",
   "name": "Galaxy Buds Pro",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "author": "Oleksii Lysenko (akafrmn), based on work by Aislan Dener Souza Vicentini",
   "license": "MIT",
-  "description": "Samsung Galaxy Buds Pro, Buds2 Pro, Buds3 Pro and Buds4 Pro in the Omarchy bar: noise control, per-earbud and case battery with in-case status, low battery warnings, codec, firmware version and update check, 360 Audio, touch controls and quick connect.",
+  "description": "Samsung Galaxy Buds Pro, Buds2 Pro, Buds3 Pro and Buds4 Pro in the Omarchy bar: noise control, per-earbud and case battery with in-case status, low battery warnings, codec, firmware version, update check and install, 360 Audio, touch controls and quick connect.",
   "kinds": [
     "service",
     "bar-widget"
@@ -44,7 +44,7 @@
         "key": "labels",
         "type": "object",
         "label": "Label overrides",
-        "description": "Replace any visible string, e.g. {\"anc\": \"ANC\", \"ambient\": \"Som ambiente\"}. Keys: noiseControl, settings, codec, off, anc, ambient, adaptive, spatial, touch, seamless, left, right, case, inCase, ancOneBud, firmware, firmwareUpdate, firmwareHow, firmwareMismatch, notOutput, serviceOff, searchHint, searching, found, connectingDevice, search, pair.",
+        "description": "Replace any visible string, e.g. {\"anc\": \"ANC\", \"ambient\": \"Som ambiente\"}. Keys: noiseControl, settings, codec, off, anc, ambient, adaptive, spatial, touch, seamless, left, right, case, inCase, ancOneBud, firmware, firmwareUpdate, firmwareMismatch, fwInstall, fwInstallNow, fwNotNow, fwCancel, fwDismiss, fwConfirm, fwDownloading, fwOpening, fwWaiting, fwTransferring, fwInstalling, fwRebooting, fwDone, fwFailed, fwRefused, notOutput, serviceOff, searchHint, searching, found, connectingDevice, search, pair.",
         "defaultValue": {}
       },
       {
@@ -68,7 +68,7 @@
         "key": "firmwareCheck",
         "type": "boolean",
         "label": "Check for firmware updates",
-        "description": "Look up the newest Samsung build for your model in the community list at fw.timschneeberger.me (model name only, at most every 12 hours) and say when an update is available. Installing is left to Galaxy Wearable.",
+        "description": "Look up the newest Samsung build for your model in the community list at fw.timschneeberger.me (model name only, at most every 12 hours) and say when an update is available. An Install button then offers the update.",
         "defaultValue": true
       }
     ]

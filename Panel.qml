@@ -700,10 +700,10 @@ Panel {
 
           Text {
             width: parent.width
-            visible: root.firmwareUpdate !== null
+            visible: root.firmwareUpdate !== null && root.install === null
             text: root.firmwareUpdate
                   ? root.t("firmwareUpdate", "Update available") + ": " + root.firmwareUpdate.build
-                    + " (" + root.firmwareUpdate.label + "). " + root.t("firmwareHow", "Install it with Galaxy Wearable.")
+                    + " (" + root.firmwareUpdate.label + ")."
                   : ""
             color: root.urgent
             wrapMode: Text.WordWrap
