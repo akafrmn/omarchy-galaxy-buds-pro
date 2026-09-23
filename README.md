@@ -190,8 +190,8 @@ on Linux. What it usually is:
 - **The default source fell back to the laptop mic**, or the card got stuck on
   `headset-head-unit-cvsd` (8 kHz). Check
   `~/.local/state/wireplumber/{default-nodes,default-profile,bluetooth-autoswitch}`,
-  fix the entry, then `systemctl --user restart wireplumber`. Buds2 Pro and
-  later should land on `headset-head-unit` (LC3-SWB or mSBC).
+  fix the entry, then restart WirePlumber (logging out and back in works too).
+  Buds2 Pro and later should land on `headset-head-unit` (LC3-SWB or mSBC).
 - **Quiet ambient recordings are fine.** The earbuds gate noise hard. Test by
   speaking.
 - **In-call audio barely audible?** The headset-profile route keeps its own
@@ -253,10 +253,10 @@ what it prints in an issue.
 
 ## Development
 
+Clone the repository, then from its folder:
+
 ```bash
-git clone https://github.com/akafrmn/omarchy-galaxy-buds-pro.git
-cd omarchy-galaxy-buds-pro
-make check        # tests + manifest checks + lint
+make check        # tests, manifest and QML checks, lint
 ```
 
 The dev loop, the protocol notes and how to add a model are in

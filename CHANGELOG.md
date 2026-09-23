@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.1] - 2026-09-24
+
+### Fixed
+- The bar widget failed to load ("Property value set multiple times"): two `onOpenedChanged`
+  handlers in `Panel.qml`, inherited from upstream's latest commit. Merged into one.
+- A JSON command that is not an object (`[]`, `null`) raised inside the stdin watch, which could
+  end command handling for the session.
+
+### Added
+- `tests/check_qml.py`, run by `make check` and CI, catches duplicate QML bindings that qmllint
+  accepts but the shell refuses to load.
+
 ## [2.0.0] - 2026-09-24
 
 First release as `io.github.akafrmn.galaxy-buds-pro`, based on
@@ -28,4 +40,5 @@ First release as `io.github.akafrmn.galaxy-buds-pro`, based on
 - Plugin id is now `io.github.akafrmn.galaxy-buds-pro`. Remove `aislandener.galaxy-buds` before
   installing: only one program can hold the earbuds' control link.
 
+[2.0.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.0.1
 [2.0.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.0.0
