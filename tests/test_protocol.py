@@ -527,6 +527,32 @@ def test_commands_that_are_not_json_objects_are_ignored():
         daemon.command(line)
     assert sent == []
 
+
+def test_one_bud_noise_setting_is_read_on_buds3_pro_and_later():
+    # Captured live from a Buds3 Pro: left worn, right idle, setting off.
+    payload = bytearray(61)
+    payload[0], payload[6], payload[12], payload[28] = 4, 0x12, 0, 0
+    state = gb.parse_extended_status(bytes(payload), profile("buds3pro"))
+    assert state["one_bud_noise"] is False
+    assert state["placement"] == {"left": "wearing", "right": "idle"}
+    payload[28] = 1
+    for name in ("buds3pro", "buds4pro"):
+        assert gb.parse_extended_status(bytes(payload), profile(name))["one_bud_noise"] is True
+
+
+def test_one_bud_noise_is_omitted_where_the_offset_is_unknown():
+    for name in ("budspro", "buds2pro"):
+        assert "one_bud_noise" not in gb.parse_extended_status(extended_payload(), profile(name))
+
+
+def test_refused_anc_ack_shows_the_mode_the_buds_kept():
+    # Live Buds3 Pro with one bud worn: ANC requested, firmware acks Off.
+    daemon = gb.Daemon()
+    daemon.profile = profile("buds3pro")
+    daemon.emit = lambda: None
+    daemon.handle_ack(gb.MSG_NOISE_CONTROLS, bytes([0]))
+    assert daemon.state["noise"] == "off"
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):

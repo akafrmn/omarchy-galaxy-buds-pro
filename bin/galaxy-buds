@@ -97,22 +97,22 @@ PROFILES = [
     {"name": "budscore", "charging": True, "ids": (322, 323), "match": ("Buds Core",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "spatial": None},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": None},
 
     {"name": "budsfe", "charging": True, "ids": (330, 331), "match": ("Buds FE",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "spatial": (35, 0)},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 
     {"name": "buds3pro", "charging": True, "ids": (340, 341), "match": ("Buds3 Pro",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "spatial": (35, 0)},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 
     {"name": "buds3fe", "charging": True, "ids": (347, 348), "match": ("Buds3 FE",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "spatial": None},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": None},
 
     # Buds4 generation (2026): same layout as Buds3 Pro per GalaxyBudsClient's
     # decoder and live Buds4 Pro captures in hmarquez-solutions/omarchy-buds.
@@ -120,17 +120,17 @@ PROFILES = [
     {"name": "buds4pro", "charging": True, "ids": (359, 360, 361), "match": ("Buds4 Pro",),
      "uuid": SPP_NEW, "noise_ack_receipt": True,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "spatial": (35, 0)},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 
     {"name": "buds4", "charging": True, "ids": (355, 356), "match": ("Buds4",),
      "uuid": SPP_NEW, "noise_ack_receipt": True,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "spatial": (35, 0)},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 
     {"name": "buds3", "charging": True, "ids": (333, 334), "match": ("Buds3",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "spatial": (35, 0)},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 ]
 
 # Anything newer than this file knows about: the noise byte and the touch
@@ -141,7 +141,7 @@ UNKNOWN_PROFILE = {"name": "unknown", "ids": (), "match": (), "uuid": SPP_NEW, "
                    "touch": ("bits7", 10), "seamless": (19, 0), "spatial": None}
 
 DEFAULTS = {"legacy_frame": False, "wearing": "nibbles", "case_battery": True,
-            "charging": False, "noise_ack_receipt": False}
+            "charging": False, "noise_ack_receipt": False, "one_bud_noise": None}
 
 
 def profile_get(profile, key):
@@ -356,6 +356,10 @@ def parse_extended_status(payload, profile):
     spatial = optional_field(payload, profile["spatial"], revision)
     if spatial is not None:
         state["spatial"] = spatial == 1
+    # Off by default: the firmware then refuses ANC with a single bud worn.
+    one_bud = optional_field(payload, profile_get(profile, "one_bud_noise"), revision)
+    if one_bud is not None:
+        state["one_bud_noise"] = one_bud == 1
     return state
 
 

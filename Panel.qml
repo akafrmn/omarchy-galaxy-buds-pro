@@ -33,6 +33,13 @@ Panel {
   readonly property bool hasModes: modes.length > 1
   readonly property var charging: buds.charging || ({})
   readonly property var placement: buds.placement || ({})
+  // With one bud worn the firmware refuses ANC unless "noise controls with
+  // one earbud" is on; say so rather than let the click do nothing.
+  readonly property bool ancNeedsBothBuds: {
+    if (buds.one_bud_noise !== false || modes.indexOf("anc") < 0) return false
+    var worn = (placement.left === "wearing" ? 1 : 0) + (placement.right === "wearing" ? 1 : 0)
+    return worn === 1
+  }
   readonly property var codec: buds.codec || ({})
   readonly property var codecOptions: codec.options || []
   // Two pairs can be connected at once; this says whether the one being shown
@@ -557,6 +564,16 @@ Panel {
               root.groupIndex = index
             }
           }
+        }
+
+        Text {
+          width: parent.width
+          visible: root.connected && root.hasModes && root.ancNeedsBothBuds
+          text: root.t("ancOneBud", "ANC needs both earbuds in. Galaxy Wearable can allow it with one.")
+          color: root.dim
+          wrapMode: Text.WordWrap
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
         }
 
         PanelSectionHeader {
