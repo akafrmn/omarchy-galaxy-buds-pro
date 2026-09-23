@@ -29,7 +29,7 @@ touching an earbud or from your phone and the bar updates immediately.
 |---|---|---|---|---|---|
 | Galaxy Buds Pro (2021) | SM-R190 | off / ANC / ambient | firmware 2+ | — | protocol-derived |
 | Galaxy Buds2 Pro | SM-R510 | off / ANC / ambient | yes | yes | tested upstream |
-| Galaxy Buds3 Pro | SM-R630 | off / ANC / ambient | yes | yes | **verified on hardware** |
+| Galaxy Buds3 Pro | SM-R630 | off / ANC / ambient | yes | yes | **verified on hardware** (firmware R630XXU0AZD2) |
 | Galaxy Buds4 Pro | SM-R640 | off / ANC / ambient | yes | yes | protocol-derived, cross-checked with live captures |
 
 "Protocol-derived" means the byte layout comes from the protocol and from other
@@ -140,6 +140,7 @@ Every key is optional. Anything you leave out keeps its English text.
 | `off` / `anc` / `ambient` / `adaptive` | Off / ANC / Ambient / Adaptive |
 | `spatial` / `touch` / `seamless` | 360 Audio / Touch controls / Quick connect |
 | `left` / `right` / `case` / `inCase` | L / R / Case / In case |
+| `ancOneBud` | ANC needs both earbuds in. Galaxy Wearable can allow it with one. |
 | `notOutput` | Not the audio output |
 | `disconnected` | Disconnected. Take them out of the case to reconnect. |
 | `notPaired` | No Galaxy Buds paired. |
@@ -162,6 +163,14 @@ A charging bud counts as "in the case" even when its placement says otherwise.
 Buds4 Pro reports a freshly docked bud as out of the ear for a moment. The case
 only reports its own charge while at least one bud sits in it, so that row
 comes and goes.
+
+## Noise control with one earbud
+
+With a single bud in, the firmware refuses ANC (it acks "Off") unless **Noise
+controls with one earbud** is enabled in Galaxy Wearable. Ambient still works.
+On Buds3, Buds3 Pro, Buds4 and Buds4 Pro the plugin reads that setting and
+shows a hint under the mode buttons instead of a click that silently does
+nothing. The panel always shows the mode the earbuds actually applied.
 
 ## Codec
 

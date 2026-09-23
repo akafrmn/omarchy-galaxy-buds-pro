@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] - 2026-09-24
+
+### Added
+- Reads the "noise controls with one earbud" setting on Buds3, Buds3 Pro, Buds4 and Buds4 Pro
+  (and Buds FE, Buds3 FE, Buds Core), and explains in the panel why ANC is refused with one bud
+  worn. Label key: `ancOneBud`. Found live on a Buds3 Pro: the firmware acks ANC with "Off".
+
+### Verified
+- End to end on Galaxy Buds3 Pro hardware: model detection by device id, per-bud battery,
+  placement, noise mode round-trip (acks read from the earbuds), codec row.
+
 ## [2.0.1] - 2026-09-24
 
 ### Fixed
@@ -40,5 +51,6 @@ First release as `io.github.akafrmn.galaxy-buds-pro`, based on
 - Plugin id is now `io.github.akafrmn.galaxy-buds-pro`. Remove `aislandener.galaxy-buds` before
   installing: only one program can hold the earbuds' control link.
 
+[2.1.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.1.0
 [2.0.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.0.1
 [2.0.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.0.0

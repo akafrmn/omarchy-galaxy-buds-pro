@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.akafrmn.galaxy-buds-pro",
   "name": "Galaxy Buds Pro",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "author": "Oleksii Lysenko (akafrmn), based on work by Aislan Dener Souza Vicentini",
   "license": "MIT",
   "description": "Samsung Galaxy Buds Pro, Buds2 Pro, Buds3 Pro and Buds4 Pro in the Omarchy bar: noise control, per-earbud and case battery with in-case status, low battery warnings, codec, 360 Audio, touch controls and quick connect.",
@@ -43,7 +43,7 @@
         "key": "labels",
         "type": "object",
         "label": "Label overrides",
-        "description": "Replace any visible string, e.g. {\"anc\": \"ANC\", \"ambient\": \"Som ambiente\"}. Keys: noiseControl, settings, codec, off, anc, ambient, adaptive, spatial, touch, seamless, left, right, case, inCase, notOutput, serviceOff, searchHint, searching, found, connectingDevice, search, pair.",
+        "description": "Replace any visible string, e.g. {\"anc\": \"ANC\", \"ambient\": \"Som ambiente\"}. Keys: noiseControl, settings, codec, off, anc, ambient, adaptive, spatial, touch, seamless, left, right, case, inCase, ancOneBud, notOutput, serviceOff, searchHint, searching, found, connectingDevice, search, pair.",
         "defaultValue": {}
       },
       {
