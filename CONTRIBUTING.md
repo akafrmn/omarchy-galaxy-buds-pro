@@ -15,6 +15,7 @@ because only Buds3 Pro is verified by the maintainer. Use the
 | `bin/galaxy-buds` | Python helper: Samsung SPP over RFCOMM via BlueZ Profile1, JSON lines in and out |
 | `tests/test_protocol.py` | Protocol tests, no earbuds needed |
 | `tests/check_manifest.py` | Mirrors `omarchy plugin validate`, plus id/credit consistency |
+| `tests/check_qml.py` | Catches a property or handler bound twice, which qmllint misses but the shell refuses to load |
 | `tools/eq-probe.py` | Asks a pair whether it accepts equalizer messages |
 
 ## Dev loop
@@ -27,6 +28,10 @@ make dev-install    # copy into ~/.config/omarchy/plugins/<id> and rescan
 - `make dev-install` copies rather than symlinks, because the Omarchy
   validator rejects symlinks. If you installed with `omarchy plugin add`,
   either work in that checkout or remove it first.
+- Check the shell log after every QML change:
+  `journalctl --user -f | grep galaxy-buds-pro`. A widget that fails to load
+  says so there and nowhere else. The engine caches components, so after a
+  load error run `omarchy-restart-shell` before trusting the next result.
 - Saving a QML file under the plugins folder hot-reloads it. The service is
   `keepLoaded`, so **changes to `Service.qml` or the helper need
   `omarchy-restart-shell`**.

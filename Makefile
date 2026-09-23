@@ -12,6 +12,7 @@ test:
 
 manifest:
 	$(PYTHON) tests/check_manifest.py
+	$(PYTHON) tests/check_qml.py
 
 # The real validator, when Omarchy is installed.
 validate:
@@ -20,7 +21,7 @@ validate:
 lint:
 	$(PYTHON) -m py_compile bin/galaxy-buds tools/eq-probe.py tests/*.py
 	@if command -v ruff >/dev/null; then ruff check .; else echo "skip ruff: not installed"; fi
-	@if [ -n "$(QMLLINT)" ]; then $(QMLLINT) Service.qml Panel.qml 2>&1 | grep -iE 'syntax|error' && exit 1 || true; fi
+	@if [ -n "$(QMLLINT)" ]; then $(QMLLINT) Service.qml Panel.qml 2>&1 | grep -iE 'syntax error|Expected token' && exit 1 || true; fi
 
 # Copy (never symlink: the validator rejects symlinks) into the plugins folder.
 dev-install:

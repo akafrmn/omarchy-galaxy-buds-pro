@@ -20,6 +20,8 @@ jobs:
         run: python tests/test_protocol.py
       - name: Manifest and repo checks
         run: python tests/check_manifest.py
+      - name: QML duplicate bindings
+        run: python tests/check_qml.py
       - name: Compile
         run: python -m py_compile bin/galaxy-buds tools/eq-probe.py tests/*.py
       - name: Ruff
