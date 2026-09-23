@@ -114,6 +114,19 @@ PROFILES = [
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "spatial": None},
 
+    # Buds4 generation (2026): same layout as Buds3 Pro per GalaxyBudsClient's
+    # decoder and live Buds4 Pro captures in hmarquez-solutions/omarchy-buds.
+    # They ack NOISE_CONTROLS with 0, a receipt rather than the applied mode.
+    {"name": "buds4pro", "charging": True, "ids": (359, 360, 361), "match": ("Buds4 Pro",),
+     "uuid": SPP_NEW, "noise_ack_receipt": True,
+     "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
+     "seamless": (19, 0), "spatial": (35, 0)},
+
+    {"name": "buds4", "charging": True, "ids": (355, 356), "match": ("Buds4",),
+     "uuid": SPP_NEW, "noise_ack_receipt": True,
+     "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
+     "seamless": (19, 0), "spatial": (35, 0)},
+
     {"name": "buds3", "charging": True, "ids": (333, 334), "match": ("Buds3",),
      "uuid": SPP_NEW,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
@@ -128,7 +141,7 @@ UNKNOWN_PROFILE = {"name": "unknown", "ids": (), "match": (), "uuid": SPP_NEW, "
                    "touch": ("bits7", 10), "seamless": (19, 0), "spatial": None}
 
 DEFAULTS = {"legacy_frame": False, "wearing": "nibbles", "case_battery": True,
-            "charging": False}
+            "charging": False, "noise_ack_receipt": False}
 
 
 def profile_get(profile, key):
@@ -358,6 +371,11 @@ def parse_status(payload, profile):
         charging = payload[7]
         state["charging"] = {"left": bool(charging & 0x10), "right": bool(charging & 0x04),
                              "case": bool(charging & 0x01)}
+        # A bud only charges in the case, whatever its placement nibble says
+        # (Buds4 Pro reports "idle" for a freshly docked bud).
+        for side in ("left", "right"):
+            if state["charging"][side]:
+                state["placement"][side] = "case"
     return state
 
 
@@ -695,6 +713,10 @@ class Daemon:
         if not params:
             return
         if acked == MSG_NOISE_CONTROLS:
+            # Some firmware acks with 0 whatever it applied; the real mode
+            # follows in NOISE_CONTROLS_UPDATE.
+            if profile_get(self.profile, "noise_ack_receipt"):
+                return
             self.update({"noise": read_noise(params[0], "controls")})
         elif acked == MSG_SET_AMBIENT_MODE:
             self.update({"noise": read_noise(params[0], "ambient")})

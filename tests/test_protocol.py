@@ -451,6 +451,73 @@ def test_unknown_placement_nibble_is_not_guessed():
 def test_original_buds_placement_is_worn_or_idle():
     assert gb.parse_placement(1, "legacy") == {"left": "wearing", "right": "idle"}
 
+
+# ---- the Galaxy Buds Pro line -------------------------------------------
+
+PRO_LINE = {
+    # name suffix is the last four hex digits of the address
+    "budspro": ("Galaxy Buds Pro (6F2A)", [gb.SPP_STANDARD], None),
+    "buds2pro": ("Galaxy Buds2 Pro (6F2A)", [gb.SPP_NEW], 325),
+    "buds3pro": ("Galaxy Buds3 Pro (D5AB)", [gb.SPP_NEW], 341),
+    "buds4pro": ("Galaxy Buds4 Pro (6F2A)", [gb.SPP_NEW], 361),
+}
+
+
+def device_uuid(device_id):
+    return gb.DEVICE_ID_UUID_PREFIX + format(device_id, "04x")
+
+
+def test_every_pro_model_is_matched_by_its_advertised_name():
+    for expected, (name, uuids, _) in PRO_LINE.items():
+        assert gb.profile_for(uuids, name)["name"] == expected, name
+
+
+def test_every_pro_model_with_a_device_id_survives_renaming():
+    for expected, (_, uuids, device_id) in PRO_LINE.items():
+        if device_id is None:
+            continue  # the 2021 Buds Pro publishes no id and cannot be renamed
+        assert gb.profile_for(uuids + [device_uuid(device_id)], "Kitchen buds")["name"] == expected
+
+
+def test_buds4_pro_is_not_swallowed_by_the_buds4_row():
+    assert gb.profile_for([gb.SPP_NEW], "Galaxy Buds4 (1B2C)")["name"] == "buds4"
+    assert gb.profile_for([gb.SPP_NEW], "Hector's Buds4 Pro")["name"] == "buds4pro"
+    for device_id in (359, 360, 361):
+        assert gb.profile_for([gb.SPP_NEW, device_uuid(device_id)], "")["name"] == "buds4pro"
+
+
+def test_the_original_buds_pro_is_not_mistaken_for_a_newer_pro():
+    assert gb.profile_for([gb.SPP_STANDARD], "Galaxy Buds Pro (0A0A)")["uuid"] == gb.SPP_STANDARD
+
+
+def test_parse_extended_status_every_pro_since_buds2():
+    for name in ("buds2pro", "buds3pro", "buds4pro"):
+        state = gb.parse_extended_status(extended_payload(), profile(name))
+        assert state["noise"] == "ambient", name
+        assert state["battery"] == {"left": 97, "right": 95, "case": 80}, name
+        assert state["touch"]["enabled"] is True, name
+        assert state["seamless"] is True, name
+        assert state["spatial"] is True, name
+
+
+def test_buds4_pro_noise_ack_is_a_receipt_not_a_mode():
+    daemon = gb.Daemon()
+    daemon.profile = profile("buds4pro")
+    daemon.emit = lambda: None
+    daemon.state["noise"] = "ambient"
+    daemon.handle_ack(gb.MSG_NOISE_CONTROLS, bytes([0]))
+    assert daemon.state["noise"] == "ambient"
+    # The applied mode arrives on its own.
+    daemon.handle(gb.MSG_NOISE_CONTROLS_UPDATE, bytes([1]))
+    assert daemon.state["noise"] == "anc"
+
+
+def test_a_charging_bud_is_in_the_case_whatever_its_nibble_says():
+    # Captured from a Buds4 Pro: right reports idle (2) with its charging bit set.
+    state = gb.parse_status(bytes([1, 50, 60, 1, 0, 0x12, 70, 0x04]), profile("buds4pro"))
+    assert state["placement"] == {"left": "wearing", "right": "case"}
+    assert state["charging"]["right"] is True
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):
