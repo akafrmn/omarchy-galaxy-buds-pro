@@ -1,0 +1,40 @@
+name: Compatibility report
+description: Tell us how the plugin works with your earbuds, good or bad
+labels: [compatibility]
+body:
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model
+      options: [Galaxy Buds Pro (SM-R190), Galaxy Buds2 Pro (SM-R510), Galaxy Buds3 Pro (SM-R630), Galaxy Buds4 Pro (SM-R640), Other]
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Earbud firmware
+      description: From Galaxy Wearable > Earbuds settings > About earbuds
+  - type: checkboxes
+    id: works
+    attributes:
+      label: What works
+      options:
+        - label: Model detected correctly
+        - label: Left / right battery
+        - label: Case battery
+        - label: "\"In case\" shown for a docked bud"
+        - label: Noise modes (off / ANC / ambient)
+        - label: Mode follows changes made on the earbuds
+        - label: 360 Audio toggle
+        - label: Touch controls toggle
+        - label: Quick connect toggle
+        - label: Codec row
+  - type: textarea
+    id: debug
+    attributes:
+      label: Debug log (optional)
+      description: |
+        Stop the plugin (`omarchy plugin disable io.github.akafrmn.galaxy-buds-pro`), then run
+        `GALAXY_BUDS_DEBUG=1 /usr/bin/python3 ~/.config/omarchy/plugins/io.github.akafrmn.galaxy-buds-pro/bin/galaxy-buds`
+        for ~20 seconds while toggling a mode on the earbuds. Paste the `<<` lines.
+      render: text

@@ -1,0 +1,5 @@
+line-length = 120
+include = ["bin/galaxy-buds", "tools/*.py", "tests/*.py"]
+
+[lint]
+select = ["E", "F", "W", "B"]

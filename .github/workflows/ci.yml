@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Protocol tests
+        run: python tests/test_protocol.py
+      - name: Manifest and repo checks
+        run: python tests/check_manifest.py
+      - name: Compile
+        run: python -m py_compile bin/galaxy-buds tools/eq-probe.py tests/*.py
+      - name: Ruff
+        run: pipx run ruff check .

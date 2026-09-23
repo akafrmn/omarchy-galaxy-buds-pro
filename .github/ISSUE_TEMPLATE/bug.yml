@@ -1,0 +1,34 @@
+name: Bug report
+description: Something is wrong with the widget or the panel
+labels: [bug]
+body:
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model
+      options: [Galaxy Buds Pro, Galaxy Buds2 Pro, Galaxy Buds3 Pro, Galaxy Buds4 Pro, Other Galaxy Buds]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Plugin state
+      description: Output of `omarchy-shell io.github.akafrmn.galaxy-buds-pro status`
+      render: json
+  - type: textarea
+    id: bluetooth
+    attributes:
+      label: Bluetooth info
+      description: Output of `bluetoothctl info <address>`. You may redact the address.
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Plugin version (manifest.json), `pacman -Q omarchy bluez pipewire`
