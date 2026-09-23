@@ -145,13 +145,17 @@ Panel {
       stopScanning()
     }
   }
+  // One handler only: QML rejects a second onOpenedChanged on the same object
+  // and the whole widget fails to load.
   onOpenedChanged: {
-    if (!opened) {
-      stopScanning()
-      connecting = false
-      connectTimeoutTimer.stop()
-      everSearched = false
+    if (opened) {
+      selectCursor(0)
+      return
     }
+    stopScanning()
+    connecting = false
+    connectTimeoutTimer.stop()
+    everSearched = false
   }
 
   Timer {
@@ -221,9 +225,6 @@ Panel {
   }
   readonly property int cursorCount: focusableRows.length
 
-  onOpenedChanged: {
-    if (opened) selectCursor(0)
-  }
 
   readonly property var modeOptions: {
     var names = {
