@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.1.1] - 2026-09-24
+
+### Fixed
+- Placement 4 (the case with its lid shut) was read as unknown, so a full bud that had stopped
+  charging was not shown in the case and could count toward the low battery warning. Seen live on
+  a Buds3 Pro when docking both buds.
+
+### Changed
+- `preview.png` is a real capture from a Buds3 Pro: one bud worn, one charging in the case.
+
 ## [2.1.0] - 2026-09-24
 
 ### Added
@@ -51,6 +61,7 @@ First release as `io.github.akafrmn.galaxy-buds-pro`, based on
 - Plugin id is now `io.github.akafrmn.galaxy-buds-pro`. Remove `aislandener.galaxy-buds` before
   installing: only one program can hold the earbuds' control link.
 
+[2.1.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.1.1
 [2.1.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.1.0
 [2.0.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.0.1
 [2.0.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.0.0
