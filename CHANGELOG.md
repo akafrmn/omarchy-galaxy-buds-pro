@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.2.0] - 2026-09-24
+
+### Added
+- Firmware: the panel shows the build each bud runs (from msg 104, sent on connect) with its
+  release month, and warns when the two buds run different builds.
+- Firmware update check, on by default (`firmwareCheck`): one HTTPS request with the model name to
+  the public build list at fw.timschneeberger.me, at most every 12 hours, TLS verified, silent on
+  failure. Shows "Update available: <build> (<month>). Install it with Galaxy Wearable."
+  The plugin does not flash firmware; the README explains why.
+- Label keys `firmware`, `firmwareUpdate`, `firmwareHow`, `firmwareMismatch`.
+
 ## [2.1.1] - 2026-09-24
 
 ### Fixed
@@ -61,6 +72,7 @@ First release as `io.github.akafrmn.galaxy-buds-pro`, based on
 - Plugin id is now `io.github.akafrmn.galaxy-buds-pro`. Remove `aislandener.galaxy-buds` before
   installing: only one program can hold the earbuds' control link.
 
+[2.2.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.2.0
 [2.1.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.1.1
 [2.1.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.1.0
 [2.0.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.0.1

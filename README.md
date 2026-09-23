@@ -20,6 +20,8 @@ touching an earbud or from your phone and the bar updates immediately.
   off the link reads **—**. It never draws a fake red 0%, and it never warns
   about a battery that is simply not being reported.
 - **One notification, not one per monitor**, when a bud runs low.
+- **Firmware at a glance.** Shows the build each bud runs and says when Samsung
+  has released a newer one.
 
 ![The bar icon among the other Omarchy indicators](docs/bar.png)
 
@@ -118,6 +120,7 @@ Set these on the widget's entry in `~/.config/omarchy/shell.json`:
 { "id": "io.github.akafrmn.galaxy-buds-pro",
   "lowBatteryWarning": true,
   "lowBatteryThreshold": 15,
+  "firmwareCheck": true,
   "labels": { "anc": "ANC", "inCase": "Im Etui" } }
 ```
 
@@ -125,6 +128,7 @@ Set these on the widget's entry in `~/.config/omarchy/shell.json`:
 |---|---|---|
 | `lowBatteryWarning` | `true` | Notify when either earbud reaches the threshold |
 | `lowBatteryThreshold` | `15` | Percent, 1–50. Re-arms once the bud climbs 5% clear |
+| `firmwareCheck` | `true` | Look up newer firmware for your model (see [Firmware](#firmware)) |
 | `labels` | `{}` | Replace any visible string (see below) |
 
 Earbuds that are charging, in the case or not connected are never counted
@@ -145,6 +149,8 @@ Every key is optional. Anything you leave out keeps its English text.
 | `disconnected` | Disconnected. Take them out of the case to reconnect. |
 | `notPaired` | No Galaxy Buds paired. |
 | `serviceOff` | The plugin service is not running. |
+| `firmware` / `firmwareUpdate` / `firmwareHow` | Firmware / Update available / Install it with Galaxy Wearable. |
+| `firmwareMismatch` | Left and right run different firmware; updates can fail until they match. |
 
 ## Battery
 
@@ -185,6 +191,30 @@ While something holds the microphone, PipeWire switches the card to a headset
 profile and the row offers the call codecs instead (LC3-SWB, mSBC, CVSD),
 marked with a mic glyph. PipeWire switches back when the mic is released.
 
+## Firmware
+
+The earbuds report their build when they connect, and the panel shows it:
+`Firmware · R630XXU0AZD2 (Apr 2026)`. Samsung's build strings read as model
+(`R630`), region (`XX`), update type and bootloader (`U0`), a major letter, then
+year (`Z` = 2026), month (`D` = April) and revision (`2`).
+
+With `firmwareCheck` on (the default), the plugin looks up the newest build for
+your model and, when there is one, adds
+`Update available: R630XXU0AZG2 (Jul 2026). Install it with Galaxy Wearable.`
+
+- **Where it looks:** the public build list at `fw.timschneeberger.me`, which
+  the GalaxyBudsClient author keeps in sync with Samsung's servers.
+- **What it sends:** one HTTPS request with only the model name (for example
+  `Buds3Pro`), when the earbuds connect and then at most every 12 hours. TLS is
+  verified. Nothing about you or your earbuds is sent.
+- **If it fails** (offline, server down), nothing is shown and nothing breaks.
+- **Turn it off** with `"firmwareCheck": false`. The installed build is still
+  shown, and no request is ever made.
+- **Different builds on the two buds** get a warning: Samsung's updater tends
+  to fail until they match.
+
+It does not install firmware. See the [FAQ](#faq).
+
 ## Microphone troubleshooting
 
 The plugin does not touch audio routing, but the Pro line's mic trips people up
@@ -217,7 +247,9 @@ on Linux. What it usually is:
   battery).
 - **Privileges**: your own user. It never elevates.
 - **Files**: none written. Nothing is read outside its own folder.
-- **Network**: none.
+- **Network**: one HTTPS GET to `fw.timschneeberger.me` with your model name,
+  when the earbuds connect and at most every 12 hours, to check for newer
+  firmware. `"firmwareCheck": false` turns it off. Nothing else.
 - **Background**: one helper process, started and stopped with the shell.
 - **IPC**: the `io.github.akafrmn.galaxy-buds-pro` shell target. The plugin adds
   no keybindings of its own.
@@ -261,6 +293,15 @@ hmarquez-solutions/omarchy-buds), but no preset UI ships here until it is
 confirmed on each Pro model. `tools/eq-probe.py` asks your pair directly. Post
 what it prints in an issue.
 
+**Can it install firmware updates?** No, on purpose. Flashing Galaxy Buds
+from a third-party tool has no recovery mode. Wrong-model flashes and
+downgrades have permanently bricked Buds2 Pro, and many Buds2 Pro and Buds3 Pro
+flashes finish at 100% without changing anything. The firmware is Samsung's
+proprietary code, too. The plugin tells you an update exists. Install it with
+Galaxy Wearable on a phone, or with
+[GalaxyBudsClient](https://github.com/timschneeb/GalaxyBudsClient) if you accept
+the risk.
+
 ## Development
 
 Clone the repository, then from its folder:
@@ -279,6 +320,9 @@ Inspired by and based on the work of **Aislan Dener Souza Vicentini** and
 The protocol engine, framing, model table and panel are his. This repository
 keeps his full commit history. See [CONTRIBUTORS.md](CONTRIBUTORS.md) for
 everyone involved.
+
+The firmware build list is served by Tim Schneeberger's
+[FirmwareProviderAPI](https://github.com/timschneeb/FirmwareProviderAPI).
 
 Protocol knowledge comes from
 [GalaxyBudsClient](https://github.com/timschneeb/GalaxyBudsClient) by Tim

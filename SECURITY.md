@@ -1,7 +1,8 @@
 # Security policy
 
 This plugin runs unsandboxed inside `omarchy-shell`. It talks to your earbuds over Bluetooth
-and runs `pactl`. It never elevates privileges, opens network connections, or writes files.
+and runs `pactl`. It never elevates privileges or writes files. Its only network access is the optional firmware
+update check (one HTTPS GET of a public build list, model name only; `firmwareCheck: false` disables it).
 
 ## Reporting a vulnerability
 

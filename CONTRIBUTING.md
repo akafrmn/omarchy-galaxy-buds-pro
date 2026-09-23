@@ -56,6 +56,13 @@ Everything model-specific is one row in `PROFILES` in `bin/galaxy-buds`:
   extended status message, as `(offset, since_revision)`.
 - Quirk flags such as `noise_ack_receipt`.
 
+- `fw_model`: the model name the firmware build list uses
+  (`https://fw.timschneeberger.me/v3/firmware/<fw_model>`).
+
+Firmware comes from msg 104 on connect: two prefix bytes, then the left and
+right build as NUL-padded ASCII (`R630XXU0AZD2`). Never add flashing: see the
+README FAQ.
+
 Every row change needs a test in `tests/test_protocol.py`, ideally with a real
 payload captured through `GALAXY_BUDS_DEBUG=1`.
 
