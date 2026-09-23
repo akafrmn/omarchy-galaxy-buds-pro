@@ -553,6 +553,12 @@ def test_refused_anc_ack_shows_the_mode_the_buds_kept():
     daemon.handle_ack(gb.MSG_NOISE_CONTROLS, bytes([0]))
     assert daemon.state["noise"] == "off"
 
+
+def test_closed_case_counts_as_in_the_case():
+    # Live Buds3 Pro, both docked and the lid shut: nibble 4, full and not charging.
+    state = gb.parse_status(bytes([4, 100, 100, 1, 0, 0x44, 35, 0x00]), profile("buds3pro"))
+    assert state["placement"] == {"left": "case", "right": "case"}
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):

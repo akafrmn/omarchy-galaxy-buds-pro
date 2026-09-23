@@ -293,7 +293,8 @@ def parse_wearing(byte, style):
 
 # Placement nibble per earbud. A bud in the case, or one that has dropped off
 # the link, reports battery 0 -- that is "no reading", not an empty battery.
-PLACEMENTS = {0: "disconnected", 1: "wearing", 2: "idle", 3: "case"}
+# 4 is the case with its lid shut, sent just before the link drops.
+PLACEMENTS = {0: "disconnected", 1: "wearing", 2: "idle", 3: "case", 4: "case"}
 
 
 def parse_placement(byte, style):

@@ -64,7 +64,8 @@ QtObject {
     var charging = root.state ? root.state.charging : null
     if (charging && charging[side] === true) return false
     var wearing = root.state ? root.state.wearing : null
-    if (wearing && Number(wearing[side]) === root.placementInCase) return false
+    // 3 is the open case, 4 the closed one.
+    if (wearing && Number(wearing[side]) >= root.placementInCase) return false
     // Nibble 0: the bud dropped off the link (closed case, out of range) and
     // its 0 is no reading, not a flat battery.
     if (wearing && Number(wearing[side]) === 0 && value <= 0) return false
