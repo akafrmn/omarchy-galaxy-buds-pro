@@ -27,6 +27,12 @@ QtObject {
   function setToggle(name, value) { send({"cmd": name, "value": value}) }
   function setCodec(profile) { send({"cmd": "codec", "value": profile}) }
 
+  // Firmware update check. Starts off and follows the widget's setting (on by
+  // default), so a user who turned it off never makes a single request.
+  property bool firmwareCheck: false
+  function pushFirmwareCheck() { send({"cmd": "firmware_check", "value": root.firmwareCheck}) }
+  onFirmwareCheckChanged: pushFirmwareCheck()
+
   function applyLine(line) {
     var text = String(line || "").trim()
     if (text === "") return
@@ -121,6 +127,7 @@ QtObject {
     command: ["/usr/bin/python3", root.helperPath]
     running: true
     stdinEnabled: true
+    onRunningChanged: if (running) root.pushFirmwareCheck()
     stdout: SplitParser {
       onRead: function(line) { root.applyLine(line) }
     }

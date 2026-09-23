@@ -33,6 +33,9 @@ Panel {
   readonly property bool hasModes: modes.length > 1
   readonly property var charging: buds.charging || ({})
   readonly property var placement: buds.placement || ({})
+  readonly property var firmware: buds.firmware || ({})
+  readonly property var firmwareBuild: firmware.build || null
+  readonly property var firmwareUpdate: buds.firmware_update || null
   // With one bud worn the firmware refuses ANC unless "noise controls with
   // one earbud" is on; say so rather than let the click do nothing.
   readonly property bool ancNeedsBothBuds: {
@@ -201,14 +204,17 @@ Panel {
     if (!isFinite(n)) n = 15
     return Math.max(1, Math.min(50, n))
   }
+  readonly property bool firmwareCheck: setting("firmwareCheck", true) === true
   function pushLowBatterySettings() {
     if (!service) return
     service.lowBatteryEnabled = lowBatteryEnabled
     service.lowBatteryThreshold = lowBatteryThreshold
+    service.firmwareCheck = firmwareCheck
   }
   onServiceChanged: pushLowBatterySettings()
   onLowBatteryEnabledChanged: pushLowBatterySettings()
   onLowBatteryThresholdChanged: pushLowBatterySettings()
+  onFirmwareCheckChanged: pushLowBatterySettings()
   Component.onCompleted: pushLowBatterySettings()
 
   // Without these the bar gives the widget zero width and nothing renders.
@@ -646,6 +652,47 @@ Panel {
               root.selectCursor(root.rowIndexFor("codec"))
               root.groupIndex = index
             }
+          }
+        }
+
+        // ---------- Firmware: what the buds run, and whether Samsung has newer ----------
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+          visible: root.connected && root.firmwareBuild !== null
+
+          Text {
+            width: parent.width
+            text: root.firmwareBuild
+                  ? root.t("firmware", "Firmware") + "  ·  " + root.firmwareBuild.build + " (" + root.firmwareBuild.label + ")"
+                  : ""
+            color: root.dim
+            elide: Text.ElideRight
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            width: parent.width
+            visible: root.firmwareUpdate !== null
+            text: root.firmwareUpdate
+                  ? root.t("firmwareUpdate", "Update available") + ": " + root.firmwareUpdate.build
+                    + " (" + root.firmwareUpdate.label + "). " + root.t("firmwareHow", "Install it with Galaxy Wearable.")
+                  : ""
+            color: root.urgent
+            wrapMode: Text.WordWrap
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            width: parent.width
+            visible: root.firmware.mismatch === true
+            text: root.t("firmwareMismatch", "Left and right run different firmware; updates can fail until they match.")
+            color: root.dim
+            wrapMode: Text.WordWrap
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
           }
         }
 

@@ -17,6 +17,8 @@ import re
 import struct
 import subprocess
 import sys
+import threading
+import time
 
 DEBUG = bool(os.environ.get("GALAXY_BUDS_DEBUG"))
 
@@ -46,6 +48,7 @@ MSG_LOCK_TOUCHPAD = 144
 MSG_SET_NOISE_REDUCTION = 152
 MSG_NOISE_REDUCTION_MODE_UPDATE = 155
 MSG_SET_SEAMLESS_CONNECTION = 175
+MSG_VERSION_INFO_LONG = 104
 
 MODES = {"off": 0, "anc": 1, "ambient": 2}
 MODE_NAMES = {v: k for k, v in MODES.items()}
@@ -65,52 +68,52 @@ MODE_NAMES = {v: k for k, v in MODES.items()}
 # before "Buds2".
 PROFILES = [
     {"name": "buds", "ids": (257, 14336), "match": ("Galaxy Buds (",),
-     "uuid": SPP_LEGACY, "legacy_frame": True, "wearing": "legacy", "case_battery": False,
+     "uuid": SPP_LEGACY, "fw_model": "Buds", "legacy_frame": True, "wearing": "legacy", "case_battery": False,
      "modes": ("off", "ambient"), "noise": ("ambient", 7), "touch": ("byte", 12),
      "seamless": None, "spatial": None},
 
     {"name": "budsplus", "ids": tuple(range(258, 267)), "match": ("Galaxy Buds+ (", "Buds+"),
-     "uuid": SPP_STANDARD,
+     "uuid": SPP_STANDARD, "fw_model": "BudsPlus",
      "modes": ("off", "ambient"), "noise": ("ambient", 8), "touch": ("byte", 12),
      "seamless": (21, 11), "spatial": None},
 
     {"name": "budslive", "ids": tuple(range(278, 285)), "match": ("Buds Live",),
-     "uuid": SPP_STANDARD,
+     "uuid": SPP_STANDARD, "fw_model": "BudsLive",
      "modes": ("off", "anc"), "noise": ("anc", 12), "touch": ("byte", 10),
      "seamless": (19, 0), "spatial": (24, 9)},
 
     {"name": "budspro", "ids": tuple(range(298, 302)), "match": ("Buds Pro",),
-     "uuid": SPP_STANDARD,
+     "uuid": SPP_STANDARD, "fw_model": "BudsPro",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("byte", 10),
      "seamless": (19, 0), "spatial": (28, 2)},
 
     {"name": "buds2pro", "charging": True, "ids": tuple(range(325, 329)), "match": ("Buds2 Pro",),
-     "uuid": SPP_NEW,
+     "uuid": SPP_NEW, "fw_model": "Buds2Pro",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "spatial": (35, 1)},
 
     {"name": "buds2", "charging": True, "ids": tuple(range(313, 322)) + (14337,), "match": ("Buds2",),
-     "uuid": SPP_NEW,
+     "uuid": SPP_NEW, "fw_model": "Buds2",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "spatial": (35, 8)},
 
     {"name": "budscore", "charging": True, "ids": (322, 323), "match": ("Buds Core",),
-     "uuid": SPP_NEW,
+     "uuid": SPP_NEW, "fw_model": "BudsCore",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": None},
 
     {"name": "budsfe", "charging": True, "ids": (330, 331), "match": ("Buds FE",),
-     "uuid": SPP_NEW,
+     "uuid": SPP_NEW, "fw_model": "BudsFe",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 
     {"name": "buds3pro", "charging": True, "ids": (340, 341), "match": ("Buds3 Pro",),
-     "uuid": SPP_NEW,
+     "uuid": SPP_NEW, "fw_model": "Buds3Pro",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 
     {"name": "buds3fe", "charging": True, "ids": (347, 348), "match": ("Buds3 FE",),
-     "uuid": SPP_NEW,
+     "uuid": SPP_NEW, "fw_model": "Buds3Fe",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": None},
 
@@ -118,17 +121,17 @@ PROFILES = [
     # decoder and live Buds4 Pro captures in hmarquez-solutions/omarchy-buds.
     # They ack NOISE_CONTROLS with 0, a receipt rather than the applied mode.
     {"name": "buds4pro", "charging": True, "ids": (359, 360, 361), "match": ("Buds4 Pro",),
-     "uuid": SPP_NEW, "noise_ack_receipt": True,
+     "uuid": SPP_NEW, "fw_model": "Buds4Pro", "noise_ack_receipt": True,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 
     {"name": "buds4", "charging": True, "ids": (355, 356), "match": ("Buds4",),
-     "uuid": SPP_NEW, "noise_ack_receipt": True,
+     "uuid": SPP_NEW, "fw_model": "Buds4", "noise_ack_receipt": True,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 
     {"name": "buds3", "charging": True, "ids": (333, 334), "match": ("Buds3",),
-     "uuid": SPP_NEW,
+     "uuid": SPP_NEW, "fw_model": "Buds3",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 ]
@@ -141,7 +144,8 @@ UNKNOWN_PROFILE = {"name": "unknown", "ids": (), "match": (), "uuid": SPP_NEW, "
                    "touch": ("bits7", 10), "seamless": (19, 0), "spatial": None}
 
 DEFAULTS = {"legacy_frame": False, "wearing": "nibbles", "case_battery": True,
-            "charging": False, "noise_ack_receipt": False, "one_bud_noise": None}
+            "charging": False, "noise_ack_receipt": False, "one_bud_noise": None,
+            "fw_model": None}
 
 
 def profile_get(profile, key):
@@ -384,6 +388,81 @@ def parse_status(payload, profile):
     return state
 
 
+# ---- firmware -----------------------------------------------------------
+# The earbuds report their build on connect (msg 104): a two-byte prefix,
+# then the left and right build as NUL-padded ASCII, e.g. R630XXU0AZD2.
+# The update check only reads the community build list GalaxyBudsClient's
+# author keeps in sync with Samsung; installing is left to Galaxy Wearable.
+FIRMWARE_RE = re.compile(rb"R[0-9]{3}[A-Z]{2}[A-Z0-9]{6}")
+FIRMWARE_URL = os.environ.get("GALAXY_BUDS_FIRMWARE_URL",
+                              "https://fw.timschneeberger.me/v3/firmware/{model}")
+FIRMWARE_RECHECK = 12 * 3600
+FIRMWARE_TIMEOUT = 10
+MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+BASE36 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def parse_version_info(payload):
+    """{"left": build, "right": build} from msg 104; a side may be missing."""
+    builds = [m.group().decode() for m in FIRMWARE_RE.finditer(bytes(payload[2:]))]
+    return dict(zip(("left", "right"), builds, strict=False))
+
+
+def decode_firmware(build):
+    """Samsung's build string: model, region, update type + bootloader,
+    major letter, then year (A=2001), month (A=Jan) and revision."""
+    if not isinstance(build, str) or not re.fullmatch(r"R[0-9]{3}[A-Z]{2}[A-Z0-9]{6}", build):
+        return None
+    year, month, revision = build[-3], build[-2], build[-1]
+    if not ("A" <= year <= "Z" and "A" <= month <= "L"):
+        return None
+    decoded = {"build": build, "model": build[:4], "region": build[4:6], "bootloader": build[6:8],
+               "major": build[8], "year": 2001 + ord(year) - ord("A"),
+               "month": ord(month) - ord("A") + 1, "revision": BASE36.index(revision)}
+    decoded["label"] = f"{MONTH_NAMES[decoded['month'] - 1]} {decoded['year']}"
+    return decoded
+
+
+def firmware_key(decoded):
+    return (decoded["bootloader"], decoded["major"], decoded["year"], decoded["month"], decoded["revision"])
+
+
+def latest_build(entries, current):
+    """The newest build in the server list for the same model, if it is newer
+    than `current`; None otherwise or when the list is unusable."""
+    mine = decode_firmware(current)
+    if not mine or not isinstance(entries, list):
+        return None
+    best = None
+    for entry in entries:
+        decoded = decode_firmware(entry.get("buildName") if isinstance(entry, dict) else None)
+        if not decoded or decoded["model"] != mine["model"]:
+            continue
+        if best is None or firmware_key(decoded) > firmware_key(best):
+            best = decoded
+    return best if best and firmware_key(best) > firmware_key(mine) else None
+
+
+def plugin_version():
+    try:
+        manifest = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "manifest.json")
+        with open(manifest) as handle:
+            return json.load(handle).get("version", "dev")
+    except (OSError, ValueError):
+        return "dev"
+
+
+def fetch_firmware_list(model):
+    """Blocking GET of the build list for one model. Sends the model name and
+    nothing else; TLS is verified."""
+    import urllib.request
+    request = urllib.request.Request(FIRMWARE_URL.format(model=model), headers={
+        "User-Agent": f"omarchy-galaxy-buds-pro/{plugin_version()}",
+        "Accept": "application/json"})
+    with urllib.request.urlopen(request, timeout=FIRMWARE_TIMEOUT) as response:
+        return json.loads(response.read(512 * 1024).decode("utf-8"))
+
+
 def lock_payload(shape, enabled, touch):
     """Touch gestures on/off. Re-sends the gesture bits we last read so turning
     the touchpad back on restores what was set, not a blank slate."""
@@ -528,6 +607,14 @@ class Daemon:
         self.registered = False
         self.default_address = ""
         self.codec_card = ""
+        # Firmware update check: off until the service passes the setting on,
+        # so a user who disabled it never touches the network.
+        self.firmware_check = False
+        self.firmware_checked = {}
+        self.firmware_results = {}
+        self.fetch_firmware = fetch_firmware_list
+        self.spawn = lambda job: threading.Thread(target=job, daemon=True).start()
+        self.defer = lambda job: job()
 
     # ---- output ----------------------------------------------------------
     def emit(self):
@@ -707,10 +794,69 @@ class Daemon:
                 self.update({"noise": read_noise(payload[0], "anc")})
             elif msg_id == MSG_ACK:
                 self.handle_ack(payload[0], payload[1:])
+            elif msg_id == MSG_VERSION_INFO_LONG:
+                self.handle_version(parse_version_info(payload))
         except IndexError:
             # A short payload means this firmware lays the message out
             # differently; keep the link rather than dying on one message.
             pass
+
+    def handle_version(self, builds):
+        if not builds:
+            return
+        decoded = [d for d in (decode_firmware(b) for b in builds.values()) if d]
+        firmware = dict(builds)
+        if decoded:
+            firmware["build"] = max(decoded, key=firmware_key)
+        # Different builds per bud is what makes Samsung's updater fail.
+        firmware["mismatch"] = len(set(builds.values())) > 1
+        self.update({"firmware": firmware})
+        self.check_firmware()
+
+    def check_firmware(self):
+        """Look up newer firmware in the background, at most every 12 hours
+        per model and build. Returns True so it can double as a GLib timer."""
+        build = ((self.state.get("firmware") or {}).get("build") or {}).get("build")
+        model = profile_get(self.profile, "fw_model")
+        if not (self.firmware_check and build and model):
+            return True
+        now = time.monotonic()
+        last = self.firmware_checked.get((model, build))
+        if last is not None and now - last < FIRMWARE_RECHECK:
+            # Checked recently: re-show that answer (the notice may have been
+            # cleared by turning the check off and on) instead of asking again.
+            if (model, build) in self.firmware_results:
+                self.show_firmware_update(self.firmware_results[(model, build)])
+            return True
+        self.firmware_checked[(model, build)] = now
+
+        def job():
+            try:
+                entries = self.fetch_firmware(model)
+            except Exception as error:  # network, TLS, JSON: never fatal
+                if DEBUG:
+                    print(f"firmware check failed: {error!r}", file=sys.stderr, flush=True)
+                return
+            self.defer(lambda: self.apply_firmware_list(entries, build))
+
+        self.spawn(job)
+        return True
+
+    def apply_firmware_list(self, entries, build):
+        newer = latest_build(entries, build)
+        notice = {"build": newer["build"], "label": newer["label"]} if newer else None
+        self.firmware_results[(profile_get(self.profile, "fw_model"), build)] = notice
+        current = ((self.state.get("firmware") or {}).get("build") or {}).get("build")
+        if current == build and self.firmware_check:
+            self.show_firmware_update(notice)
+        return False
+
+    def show_firmware_update(self, notice):
+        if notice:
+            if self.state.get("firmware_update") != notice:
+                self.update({"firmware_update": notice})
+        elif self.state.pop("firmware_update", None):
+            self.emit()
 
     def handle_ack(self, acked, params):
         """The earbuds answer our commands with an ack carrying the value they
@@ -782,6 +928,12 @@ class Daemon:
                 self.refresh_audio()
         elif name == "refresh":
             self.emit()
+        elif name == "firmware_check":
+            self.firmware_check = value is True
+            if self.firmware_check:
+                self.check_firmware()
+            elif self.state.pop("firmware_update", None):
+                self.emit()
 
     def on_stdin(self, fd, condition):
         # Read the fd directly rather than through sys.stdin: readline() pulls a
@@ -862,6 +1014,9 @@ class Daemon:
 
         GLib.io_add_watch(sys.stdin.fileno(), GLib.PRIORITY_DEFAULT,
                           GLib.IOCondition.IN | GLib.IOCondition.HUP, self.on_stdin)
+        # The lookup runs on a worker thread; its result joins the main loop.
+        self.defer = lambda job: GLib.idle_add(job)
+        GLib.timeout_add_seconds(3600, self.check_firmware)
         GLib.timeout_add_seconds(5, self.register_profile)
         self.connect()
         self.refresh_audio()

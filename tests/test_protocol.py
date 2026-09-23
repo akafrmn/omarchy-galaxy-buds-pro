@@ -559,6 +559,118 @@ def test_closed_case_counts_as_in_the_case():
     state = gb.parse_status(bytes([4, 100, 100, 1, 0, 0x44, 35, 0x00]), profile("buds3pro"))
     assert state["placement"] == {"left": "case", "right": "case"}
 
+
+# ---- firmware -------------------------------------------------------------
+
+# msg 104 exactly as a Buds3 Pro sent it on connect.
+LIVE_VERSION_INFO = bytes.fromhex(
+    "02025236333058585530415a443200000000000000005236333058585530415a4432"
+    "00000000000000000000")
+
+# Trimmed from the live build list for Buds3Pro (newest first, as served).
+LIVE_BUILDS = [{"buildName": b, "modelString": "R630"} for b in
+               ("R630XXU0AZG2", "R630XXU0AZD2", "R630XXU0AZD1", "R630XXU0AYJ1", "R630XXU0AXG5")]
+
+
+def firmware_daemon(fetch):
+    daemon = gb.Daemon()
+    daemon.profile = profile("buds3pro")
+    daemon.emit = lambda: None
+    daemon.fetch_firmware = fetch
+    daemon.spawn = lambda job: job()
+    return daemon
+
+
+def test_version_info_is_read_per_bud():
+    assert gb.parse_version_info(LIVE_VERSION_INFO) == {"left": "R630XXU0AZD2", "right": "R630XXU0AZD2"}
+    assert gb.parse_version_info(bytes(2) + b"R640XXU0AZD2" + bytes(8)) == {"left": "R640XXU0AZD2"}
+    assert gb.parse_version_info(bytes([2, 2, 0xFF, 0x00, 0x41])) == {}
+
+
+def test_firmware_build_is_decoded():
+    fw = gb.decode_firmware("R630XXU0AZD2")
+    assert (fw["model"], fw["year"], fw["month"], fw["revision"], fw["label"]) == ("R630", 2026, 4, 2, "Apr 2026")
+    assert gb.decode_firmware("R630XXU0AZG2")["label"] == "Jul 2026"
+    assert gb.decode_firmware("R630XXU0AXG5")["year"] == 2024
+    for bad in ("", "R630", "R630XXU0AZM2", "X630XXU0AZD2", None, 42):
+        assert gb.decode_firmware(bad) is None, bad
+
+
+def test_firmware_ordering_uses_year_month_then_base36_revision():
+    order = ["R630XXU0AYJ1", "R630XXU0AZC3", "R630XXU0AZD1", "R630XXU0AZD9", "R630XXU0AZDA", "R630XXU0AZG2"]
+    keys = [gb.firmware_key(gb.decode_firmware(b)) for b in order]
+    assert keys == sorted(keys)
+
+
+def test_latest_build_finds_the_newer_release_for_the_same_model():
+    assert gb.latest_build(LIVE_BUILDS, "R630XXU0AZD2")["build"] == "R630XXU0AZG2"
+    assert gb.latest_build(LIVE_BUILDS, "R630XXU0AZG2") is None
+    other = [{"buildName": "R640XXU0AZZ9"}]
+    assert gb.latest_build(other, "R630XXU0AZD2") is None
+    for junk in (None, {}, "x", [None, 3, {"buildName": 7}]):
+        assert gb.latest_build(junk, "R630XXU0AZD2") is None
+
+
+def test_version_message_updates_state_and_checks_for_an_update():
+    calls = []
+    daemon = firmware_daemon(lambda model: calls.append(model) or LIVE_BUILDS)
+    daemon.firmware_check = True
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
+    assert daemon.state["firmware"]["build"]["label"] == "Apr 2026"
+    assert daemon.state["firmware"]["mismatch"] is False
+    assert daemon.state["firmware_update"] == {"build": "R630XXU0AZG2", "label": "Jul 2026"}
+    assert calls == ["Buds3Pro"]
+    # A second report of the same build does not ask again within 12 hours.
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
+    assert calls == ["Buds3Pro"]
+
+
+def test_firmware_check_off_never_touches_the_network():
+    def fetch(model):
+        raise AssertionError("fetched while disabled")
+    daemon = firmware_daemon(fetch)
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
+    assert "firmware_update" not in daemon.state
+    assert daemon.state["firmware"]["left"] == "R630XXU0AZD2"
+
+
+def test_turning_the_check_off_clears_the_notice():
+    daemon = firmware_daemon(lambda model: LIVE_BUILDS)
+    daemon.command('{"cmd":"firmware_check","value":true}')
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
+    assert "firmware_update" in daemon.state
+    daemon.command('{"cmd":"firmware_check","value":false}')
+    assert "firmware_update" not in daemon.state
+    # Back on within 12 hours: the remembered answer returns without a request.
+    daemon.fetch_firmware = lambda model: (_ for _ in ()).throw(AssertionError("fetched again"))
+    daemon.command('{"cmd":"firmware_check","value":true}')
+    assert daemon.state["firmware_update"]["build"] == "R630XXU0AZG2"
+
+
+def test_a_failing_lookup_is_silent():
+    for failure in (OSError("offline"), ValueError("bad json"), TimeoutError()):
+        def fetch(model, failure=failure):
+            raise failure
+        daemon = firmware_daemon(fetch)
+        daemon.firmware_check = True
+        daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
+        assert "firmware_update" not in daemon.state
+        assert "firmware" in daemon.state
+
+
+def test_different_builds_per_bud_are_flagged():
+    payload = bytes(2) + b"R630XXU0AZD2" + bytes(8) + b"R630XXU0AZC3" + bytes(8)
+    daemon = firmware_daemon(lambda model: [])
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, payload)
+    assert daemon.state["firmware"]["mismatch"] is True
+    assert daemon.state["firmware"]["build"]["build"] == "R630XXU0AZD2"
+
+
+def test_every_model_names_its_firmware_list():
+    for entry in gb.PROFILES:
+        assert entry.get("fw_model"), entry["name"]
+    assert gb.profile_get(gb.UNKNOWN_PROFILE, "fw_model") is None
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):
