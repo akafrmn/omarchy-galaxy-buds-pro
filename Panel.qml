@@ -32,6 +32,7 @@ Panel {
   readonly property bool hasTouch: touch.enabled !== undefined
   readonly property bool hasModes: modes.length > 1
   readonly property var charging: buds.charging || ({})
+  readonly property var placement: buds.placement || ({})
   readonly property var codec: buds.codec || ({})
   readonly property var codecOptions: codec.options || []
   // Two pairs can be connected at once; this says whether the one being shown
@@ -237,13 +238,33 @@ Panel {
     return out
   }
 
+  // A bud in the case, or one that dropped off the link, reports 0: that is
+  // "no reading", so say where it is instead of drawing an empty battery.
+  function budRow(side, label) {
+    var where = String(placement[side] || "")
+    var value = Number(battery[side])
+    var isCharging = charging[side] === true
+    var status = ""
+    if (where === "case") status = "case"
+    else if (where === "disconnected" && value <= 0) status = "offline"
+    return {label: label, value: value, charging: isCharging, status: status,
+            known: !(status === "offline" || (status === "case" && value <= 0))}
+  }
+
+  function batteryText(row) {
+    var pct = (row.charging ? "󰂄 " : "") + row.value + "%"
+    if (row.status === "offline") return "—"
+    if (row.status === "case") return row.value > 0 ? t("inCase", "In case") + " · " + pct : t("inCase", "In case")
+    return pct
+  }
+
   readonly property var batteryRows: {
     var rows = []
     if (!connected) return rows
     if (battery.left !== undefined)
-      rows.push({label: t("left", "L"), value: battery.left, charging: charging.left === true})
+      rows.push(budRow("left", t("left", "L")))
     if (battery.right !== undefined)
-      rows.push({label: t("right", "R"), value: battery.right, charging: charging.right === true})
+      rows.push(budRow("right", t("right", "R")))
     // The case only reports its own charge while the earbuds sit in it.
     if (battery.case > 0)
       rows.push({label: t("case", "Case"), value: battery.case, charging: charging.case === true})
@@ -475,11 +496,12 @@ Panel {
                 color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
 
                 Rectangle {
+                  visible: modelData.known !== false
                   width: Math.max(parent.height, parent.width * Math.max(0, Math.min(100, modelData.value)) / 100)
                   height: parent.height
                   radius: parent.radius
                   // A charge this low is the one thing here worth interrupting for.
-                  color: modelData.value <= 20 ? root.urgent : root.foreground
+                  color: modelData.value <= 20 && !modelData.charging && !modelData.status ? root.urgent : root.foreground
                   Behavior on width { NumberAnimation { duration: 160 } }
                 }
               }
@@ -488,12 +510,12 @@ Panel {
                 id: cellValue
                 // The bolt reads as "this number is going up", which is the
                 // whole point of showing it while an earbud sits in the case.
-                text: (modelData.charging ? "󰂄 " : "") + modelData.value + "%"
-                color: root.foreground
+                text: root.batteryText(modelData)
+                color: modelData.status ? root.dim : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 horizontalAlignment: Text.AlignRight
-                width: Style.space(52)
+                width: Math.max(Style.space(52), implicitWidth)
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
               }

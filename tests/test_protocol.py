@@ -420,6 +420,37 @@ def test_seamless_is_inverted_on_the_wire():
     assert sent == [(gb.MSG_SET_SEAMLESS_CONNECTION, bytes([0]))]
 
 
+
+def test_bud_in_the_case_is_named_not_read_as_empty():
+    # Left in the case (3), right in the ear (1); the case bud reports 0.
+    payload = bytes([5, 0, 64, 1, 0, 0x31, 70, 0x00])
+    state = gb.parse_status(payload, profile("buds3pro"))
+    assert state["battery"]["left"] == 0
+    assert state["placement"] == {"left": "case", "right": "wearing"}
+
+
+def test_bud_dropped_off_the_link_is_disconnected():
+    payload = bytes([5, 0, 71, 1, 0, 0x02, 0, 0x00])
+    state = gb.parse_status(payload, profile("buds2pro"))
+    assert state["placement"] == {"left": "disconnected", "right": "idle"}
+
+
+def test_extended_status_carries_placement():
+    payload = bytearray(40)
+    payload[0] = 3
+    payload[2], payload[3] = 0, 55
+    payload[6] = 0x31
+    state = gb.parse_extended_status(bytes(payload), profile("buds3pro"))
+    assert state["placement"] == {"left": "case", "right": "wearing"}
+
+
+def test_unknown_placement_nibble_is_not_guessed():
+    assert gb.parse_placement(0x9F, "nibbles") == {"left": "unknown", "right": "unknown"}
+
+
+def test_original_buds_placement_is_worn_or_idle():
+    assert gb.parse_placement(1, "legacy") == {"left": "wearing", "right": "idle"}
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):

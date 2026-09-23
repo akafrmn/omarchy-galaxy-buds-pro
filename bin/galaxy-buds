@@ -278,6 +278,20 @@ def parse_wearing(byte, style):
     return {"left": byte >> 4, "right": byte & 0x0F}
 
 
+# Placement nibble per earbud. A bud in the case, or one that has dropped off
+# the link, reports battery 0 -- that is "no reading", not an empty battery.
+PLACEMENTS = {0: "disconnected", 1: "wearing", 2: "idle", 3: "case"}
+
+
+def parse_placement(byte, style):
+    """Name where each earbud is. The original Buds only say worn or not."""
+    if style == "legacy":
+        worn = parse_wearing(byte, style)
+        return {side: "wearing" if worn[side] else "idle" for side in ("left", "right")}
+    return {side: PLACEMENTS.get(value, "unknown")
+            for side, value in parse_wearing(byte, style).items()}
+
+
 def read_noise(byte, kind):
     if kind == "ambient":
         return "ambient" if byte else "off"
@@ -318,6 +332,7 @@ def parse_extended_status(payload, profile):
         "revision": revision,
         "battery": battery,
         "wearing": parse_wearing(payload[6], profile_get(profile, "wearing")),
+        "placement": parse_placement(payload[6], profile_get(profile, "wearing")),
         "noise": read_noise(payload[noise_offset], noise_kind),
         "touch": parse_touch(payload[touch_offset], touch_shape),
     }
@@ -333,7 +348,8 @@ def parse_extended_status(payload, profile):
 
 def parse_status(payload, profile):
     state = {"battery": {"left": payload[1], "right": payload[2]},
-             "wearing": parse_wearing(payload[5], profile_get(profile, "wearing"))}
+             "wearing": parse_wearing(payload[5], profile_get(profile, "wearing")),
+             "placement": parse_placement(payload[5], profile_get(profile, "wearing"))}
     if profile_get(profile, "case_battery") and len(payload) > 6:
         state["battery"]["case"] = payload[6]
     # Only Buds2 and newer report what is charging; on older models that byte
