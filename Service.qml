@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 
 // Mounted once per shell session. Bar widgets are mounted once per monitor, and
@@ -37,6 +38,81 @@ QtObject {
     }
   }
 
+  // ---- low battery warning ---------------------------------------------
+  // Lives here rather than in Panel.qml: the panel is instantiated once per
+  // monitor, so notifying from there would fire one notification per screen.
+  // The panel pushes the user's settings down instead (idempotent per monitor).
+  property bool lowBatteryEnabled: true
+  property int lowBatteryThreshold: 15
+
+  // Placement nibble 3 means the earbud is sitting in the case; a bud in the
+  // case is on its way up, not down, so it never warrants a warning.
+  readonly property int placementInCase: 3
+  // Re-arm only once the bud climbs clear of the threshold, so a charge level
+  // hovering on the boundary cannot produce a stream of notifications.
+  readonly property int rearmMargin: 5
+
+  function budBattery(side) {
+    var battery = root.state ? root.state.battery : null
+    var value = battery ? Number(battery[side]) : NaN
+    return isFinite(value) ? value : -1
+  }
+
+  function budLow(side) {
+    var value = budBattery(side)
+    if (value < 0) return false
+    var charging = root.state ? root.state.charging : null
+    if (charging && charging[side] === true) return false
+    var wearing = root.state ? root.state.wearing : null
+    if (wearing && Number(wearing[side]) === root.placementInCase) return false
+    return value <= root.lowBatteryThreshold
+  }
+
+  function budClear(side) {
+    var value = budBattery(side)
+    return value < 0 || value > root.lowBatteryThreshold + root.rearmMargin
+  }
+
+  function checkLowBattery() {
+    if (!root.lowBatteryEnabled) return
+    if (!root.state || root.state.connected !== true) return
+
+    var leftLow = budLow("left")
+    var rightLow = budLow("right")
+
+    if (leftLow || rightLow) {
+      if (lowBatteryState.notified) return
+      lowBatteryState.notified = true
+      var parts = []
+      if (leftLow) parts.push("Left " + budBattery("left") + "%")
+      if (rightLow) parts.push("Right " + budBattery("right") + "%")
+      notifier.command = [
+        "omarchy-notification-send",
+        "-g", "󰋋",
+        "-u", "critical",
+        "-i", "battery-caution",
+        "-t", "30000",
+        "-r", "9271",
+        (root.state.name || "Galaxy Buds") + " battery low",
+        parts.join("  ·  ")
+      ]
+      notifier.running = true
+    } else if (lowBatteryState.notified && budClear("left") && budClear("right")) {
+      lowBatteryState.notified = false
+    }
+  }
+
+  onStateChanged: root.checkLowBattery()
+
+  // Survives a shell reload so a restart does not re-announce a level the user
+  // has already been told about.
+  property PersistentProperties lowBatteryState: PersistentProperties {
+    reloadableId: "io.github.akafrmn.galaxy-buds-pro.lowBattery"
+    property bool notified: false
+  }
+
+  property Process notifier: Process {}
+
   property Process daemon: Process {
     command: ["/usr/bin/python3", root.helperPath]
     running: true
@@ -71,5 +147,10 @@ QtObject {
     function open(): void { if (root.shell) root.shell.summon(root.pluginId, "{}") }
     function close(): void { if (root.shell) root.shell.hide(root.pluginId) }
     function toggle(): void { if (root.shell) root.shell.toggle(root.pluginId, "{}") }
+    // Exposed for testing the warning without waiting for a real drain.
+    function testLowBattery(): void {
+      root.lowBatteryState.notified = false
+      root.checkLowBattery()
+    }
   }
 }

@@ -180,6 +180,25 @@ Panel {
     return value === undefined || value === null ? fallback : String(value)
   }
 
+  // The low-battery warning is raised by the service (mounted once per
+  // session) so it fires once, not once per monitor. Settings live on the bar
+  // widget though, so push them down; every monitor writes the same values.
+  readonly property bool lowBatteryEnabled: setting("lowBatteryWarning", true) === true
+  readonly property int lowBatteryThreshold: {
+    var n = parseInt(String(setting("lowBatteryThreshold", 15)), 10)
+    if (!isFinite(n)) n = 15
+    return Math.max(1, Math.min(50, n))
+  }
+  function pushLowBatterySettings() {
+    if (!service) return
+    service.lowBatteryEnabled = lowBatteryEnabled
+    service.lowBatteryThreshold = lowBatteryThreshold
+  }
+  onServiceChanged: pushLowBatterySettings()
+  onLowBatteryEnabledChanged: pushLowBatterySettings()
+  onLowBatteryThresholdChanged: pushLowBatterySettings()
+  Component.onCompleted: pushLowBatterySettings()
+
   // Without these the bar gives the widget zero width and nothing renders.
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight

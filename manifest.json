@@ -34,7 +34,9 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "labels": {}
+      "labels": {},
+      "lowBatteryWarning": true,
+      "lowBatteryThreshold": 15
     },
     "schema": [
       {
@@ -43,6 +45,23 @@
         "label": "Label overrides",
         "description": "Replace any visible string, e.g. {\"anc\": \"ANC\", \"ambient\": \"Som ambiente\"}. Keys: noiseControl, settings, codec, off, anc, ambient, adaptive, spatial, touch, seamless, left, right, case, notOutput, serviceOff, searchHint, searching, found, connectingDevice, search, pair.",
         "defaultValue": {}
+      },
+      {
+        "key": "lowBatteryWarning",
+        "type": "boolean",
+        "label": "Low battery warning",
+        "description": "Send a desktop notification when either earbud drops to the threshold. Earbuds that are charging, in the case or not connected are ignored.",
+        "defaultValue": true
+      },
+      {
+        "key": "lowBatteryThreshold",
+        "type": "integer",
+        "label": "Low battery threshold (%)",
+        "description": "Warn once either earbud falls to this percentage. Re-arms after it climbs 5% clear.",
+        "min": 1,
+        "max": 50,
+        "step": 1,
+        "defaultValue": 15
       }
     ]
   }
