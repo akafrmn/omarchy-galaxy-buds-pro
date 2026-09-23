@@ -7,7 +7,7 @@ Commit every time you change code in this repo — don't batch unrelated changes
 After every `git commit` in this repo, run:
 
 ```
-omarchy plugin update aislandener.galaxy-buds --yes
+omarchy plugin update io.github.akafrmn.galaxy-buds-pro --yes
 ```
 
 This refreshes the installed Omarchy plugin so local testing reflects the latest commit.

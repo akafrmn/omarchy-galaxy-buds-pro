@@ -14,7 +14,7 @@ QtObject {
   // the complete picture, so replacing it wholesale keeps bindings simple.
   property var state: ({})
 
-  readonly property string pluginId: "aislandener.galaxy-buds"
+  readonly property string pluginId: "io.github.akafrmn.galaxy-buds-pro"
   readonly property string helperPath: Qt.resolvedUrl("bin/galaxy-buds").toString().replace(/^file:\/\//, "")
 
   function send(request) {

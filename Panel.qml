@@ -8,8 +8,8 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "aislandener.galaxy-buds"
-  ipcTarget: "aislandener.galaxy-buds"
+  moduleName: "io.github.akafrmn.galaxy-buds-pro"
+  ipcTarget: "io.github.akafrmn.galaxy-buds-pro"
   manageIpc: false
 
   // The helper lives in the plugin's service, mounted once per session; this
@@ -173,7 +173,7 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   // Every visible string can be replaced from this widget's shell.json entry:
-  //   { "id": "aislandener.galaxy-buds", "labels": { "anc": "ANC", ... } }
+  //   { "id": "io.github.akafrmn.galaxy-buds-pro", "labels": { "anc": "ANC", ... } }
   readonly property var labels: setting("labels", ({}))
   function t(key, fallback) {
     var value = labels ? labels[key] : undefined
