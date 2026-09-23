@@ -1104,6 +1104,10 @@ class Daemon:
     def handle_fota(self, msg_id, payload):
         flash = self.flash
         if not flash or not flash.get("image"):
+            # After an install the earbuds repeat the result on every connect
+            # until someone acknowledges it, as Samsung's app does.
+            if msg_id == MSG_FOTA_RESULT:
+                self.send_flagged(MSG_FOTA_RESULT, bytes([1]), FLAG_RESPONSE)
             return
         if msg_id == MSG_FOTA_OPEN:
             if payload[0] != 0:

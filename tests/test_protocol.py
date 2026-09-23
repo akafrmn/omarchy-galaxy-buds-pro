@@ -1004,6 +1004,18 @@ def test_install_reports_download_and_transfer_progress():
     assert later["bytes"] == 1500 and later["percent"] == 50
     assert later["eta"] == 10   # 1500 bytes took 10 s, 1500 left
 
+
+def test_a_late_install_result_is_acknowledged():
+    # Seen live after an install: the earbuds repeat "185 00 00" on every
+    # connect until the host answers it.
+    daemon = ready_to_flash()
+    daemon.handle(gb.MSG_FOTA_RESULT, bytes([0, 0]))
+    assert sent(daemon.socket) == [(gb.MSG_FOTA_RESULT, bytes([1]), gb.FLAG_RESPONSE)]
+    assert "firmware_install" not in daemon.state
+    # Other firmware messages outside an install are still ignored.
+    daemon.handle(gb.MSG_FOTA_CONTROL, bytes([0, 100, 0]))
+    assert len(daemon.socket.frames) == 1
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):
