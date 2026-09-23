@@ -671,6 +671,266 @@ def test_every_model_names_its_firmware_list():
         assert entry.get("fw_model"), entry["name"]
     assert gb.profile_get(gb.UNKNOWN_PROFILE, "fw_model") is None
 
+
+# ---- firmware installation --------------------------------------------------
+
+import struct  # noqa: E402
+import zlib  # noqa: E402
+
+
+def make_image(build="R630XXU0AZG2", model=b"SM-R630", segments=((6, 1234), (7, 777))):
+    """A synthetic image in Samsung's container layout. Segment bytes are
+    pseudo-random but carry the model and build strings like a real one."""
+    datas = []
+    for index, (_, size) in enumerate(segments):
+        body = bytes((i * 31 + index * 7) & 0xFF for i in range(size))
+        if index == 0:
+            tag = model + b"\0" + build.encode()
+            body = tag + body[len(tag):]
+        datas.append(body)
+    header_size = 12 + 16 * len(segments)
+    table, blob, offset = b"", b"", header_size
+    for (seg_id, _), body in zip(segments, datas):
+        table += struct.pack("<iIii", seg_id, zlib.crc32(body), offset, len(body))
+        blob += body
+        offset += len(body)
+    total = header_size + len(blob) + 4
+    image = struct.pack("<IiI", 0xCAFECAFE, total, len(segments)) + table + blob
+    return image + struct.pack("<I", zlib.crc32(datas[-1])), datas
+
+
+class FakeSocket:
+    def __init__(self):
+        self.frames = []
+        self.closed = False
+
+    def sendall(self, data):
+        self.frames.append(bytes(data))
+
+    def close(self):
+        self.closed = True
+
+    def fileno(self):
+        return -1
+
+
+def sent(sock, msg_id=None):
+    """(msg_id, payload, flags) for every frame written, optionally filtered."""
+    out = []
+    for frame in sock.frames:
+        flags = struct.unpack_from("<H", frame, 1)[0] & 0xF000
+        (mid, payload), = gb.decode(frame)[0]
+        if msg_id is None or mid == msg_id:
+            out.append((mid, payload, flags))
+    return out
+
+
+def ready_to_flash(image_bytes=None, target="R630XXU0AZG2"):
+    daemon = gb.Daemon()
+    daemon.profile = profile("buds3pro")
+    daemon.emit = lambda: None
+    daemon.spawn = lambda job: job()
+    daemon.socket = FakeSocket()
+    image_bytes = image_bytes or make_image()[0]
+    daemon.fetch_image = lambda build: image_bytes
+    daemon.state.update({
+        "connected": True,
+        "firmware": {"left": "R630XXU0AZD2", "right": "R630XXU0AZD2", "mismatch": False,
+                     "build": gb.decode_firmware("R630XXU0AZD2")},
+        "firmware_update": {"build": target, "label": "Jul 2026"},
+        "placement": {"left": "wearing", "right": "idle"}, "wearing": {"left": 1, "right": 2},
+        "battery": {"left": 80, "right": 75, "case": 50}})
+    return daemon
+
+
+def pull_segment(daemon, seg_id, size, per_request=5):
+    """Play the earbud: announce the segment, request it all by offset."""
+    daemon.handle(gb.MSG_FOTA_CONTROL, struct.pack("<Bh", 1, seg_id))
+    before = len(daemon.socket.frames)
+    offset, mtu = 0, daemon.flash["mtu"]
+    while offset < size:
+        daemon.handle(gb.MSG_FOTA_DOWNLOAD_DATA, struct.pack("<I", offset) + bytes([per_request]))
+        offset += mtu * per_request
+    chunks = [f for f in daemon.socket.frames[before:]]
+    got, lasts = b"", []
+    for frame in chunks:
+        flags = struct.unpack_from("<H", frame, 1)[0] & 0xF000
+        (mid, payload), = gb.decode(frame)[0]
+        assert mid == gb.MSG_FOTA_DOWNLOAD_DATA and flags == gb.FLAG_RESPONSE | gb.FLAG_FRAGMENT
+        header = struct.unpack_from("<I", payload)[0]
+        assert header & 0x7FFFFFFF == len(got), "chunks must arrive at the offsets asked for"
+        lasts.append(not header & 0x80000000)
+        got += payload[4:]
+    return got, lasts
+
+
+def test_simulated_earbud_pulls_the_whole_image_and_installs_it():
+    image, datas = make_image()
+    daemon = ready_to_flash(image)
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    (mid, payload, flags), = sent(daemon.socket)
+    assert mid == gb.MSG_FOTA_OPEN and flags == 0
+    crc, count = struct.unpack_from("<IB", payload)
+    assert count == 2 and crc == zlib.crc32(datas[-1])
+    assert struct.unpack_from("<BII", payload, 5) == (6, len(datas[0]), zlib.crc32(datas[0]))
+
+    daemon.handle(gb.MSG_FOTA_OPEN, bytes([0]))
+    daemon.handle(gb.MSG_FOTA_CONTROL, struct.pack("<Bh", 0, 900))   # asks for more than allowed
+    assert sent(daemon.socket, gb.MSG_FOTA_CONTROL)[-1] == (gb.MSG_FOTA_CONTROL, struct.pack("<Bh", 0, 650),
+                                                              gb.FLAG_RESPONSE)
+    daemon.flash["mtu"] = 100   # small chunks exercise many requests
+    for seg_id, body in ((6, datas[0]), (7, datas[1])):
+        got, lasts = pull_segment(daemon, seg_id, len(body))
+        assert got == body
+        assert lasts[-1] is True and not any(lasts[:-1])
+    assert daemon.state["firmware_install"]["stage"] == "transferring"
+
+    daemon.handle(gb.MSG_FOTA_UPDATE, bytes([1, 0, 0]))
+    assert sent(daemon.socket, gb.MSG_FOTA_UPDATE)[-1] == (gb.MSG_FOTA_UPDATE, bytes([1]), gb.FLAG_RESPONSE)
+    daemon.handle(gb.MSG_FOTA_RESULT, bytes([0, 0]))
+    assert sent(daemon.socket, gb.MSG_FOTA_RESULT)[-1] == (gb.MSG_FOTA_RESULT, bytes([1]), gb.FLAG_RESPONSE)
+    assert daemon.state["firmware_install"]["stage"] == "rebooting"
+
+    daemon.disconnect()   # they restart to install
+    assert daemon.state["firmware_install"]["stage"] == "rebooting"
+    new = bytes(2) + b"R630XXU0AZG2" + bytes(8) + b"R630XXU0AZG2" + bytes(8)
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, new)
+    assert daemon.state["firmware_install"] == {"stage": "done", "target": "R630XXU0AZG2"}
+    assert "firmware_update" not in daemon.state and daemon.flash is None
+
+
+def test_restart_on_the_old_build_is_reported_as_not_applied():
+    daemon = ready_to_flash()
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    daemon.handle(gb.MSG_FOTA_OPEN, bytes([0]))
+    daemon.handle(gb.MSG_FOTA_RESULT, bytes([0, 0]))
+    daemon.disconnect()
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)   # still AZD2
+    assert daemon.state["firmware_install"]["stage"] == "failed"
+    assert "did not apply" in daemon.state["firmware_install"]["error"]
+
+
+def test_preflight_refuses_everything_unsafe():
+    cases = {
+        "downgrade": lambda st: st.update(firmware_update={"build": "R630XXU0AYJ1"}),
+        "same build": lambda st: st.update(firmware_update={"build": "R630XXU0AZD2"}),
+        "other model": lambda st: st.update(firmware_update={"build": "R640XXU0AZG2"}),
+        "mismatch": lambda st: st["firmware"].update(mismatch=True),
+        "one bud gone": lambda st: st["firmware"].pop("right"),
+        "low battery": lambda st: st["battery"].update(left=29),
+        "closed case": lambda st: st["wearing"].update(right=4),
+        "dropped bud": lambda st: st["placement"].update(right="disconnected"),
+        "not connected": lambda st: st.update(connected=False),
+        "unknown installed build": lambda st: st["firmware"].pop("build"),
+    }
+    for name, breakage in cases.items():
+        daemon = ready_to_flash()
+        breakage(daemon.state)
+        assert gb.flash_preflight(daemon.state, daemon.profile, daemon.state["firmware_update"]["build"]), name
+    daemon = ready_to_flash()
+    assert gb.flash_preflight(daemon.state, daemon.profile, "R630XXU0AZG2") == []
+    assert gb.flash_preflight(daemon.state, daemon.profile, "R630XXU0AZH1"), "only the offered build"
+
+
+def test_refused_install_sends_nothing():
+    daemon = ready_to_flash()
+    daemon.state["battery"]["right"] = 10
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    assert daemon.socket.frames == []
+    assert daemon.state["firmware_install"]["stage"] == "refused"
+    assert any("30%" in reason for reason in daemon.state["firmware_install"]["reasons"])
+
+
+def test_image_verification_rejects_bad_files():
+    good, _ = make_image()
+    gb.verify_firmware_image(good, "R630XXU0AZG2")
+    # Real Buds3 Pro images mention the sibling SM-R530 in a shared template.
+    gb.verify_firmware_image(make_image(model=b"SM-R630 VERSNAME:1,SM-R530")[0], "R630XXU0AZG2")
+    corrupt = bytearray(good)
+    corrupt[200] ^= 0xFF
+    truncated = good[:-10]
+    bad = {
+        "magic": b"\0\0\0\0" + good[4:],
+        "truncated": truncated,
+        "crc": bytes(corrupt),
+        "other model": make_image(model=b"SM-R510")[0],
+        "foreign build inside": make_image(model=b"SM-R630 R510XXU0AZG2")[0],
+        "other build": make_image(build="R630XXU0AZF1")[0],
+        "tiny": b"\xfe\xca",
+    }
+    for name, data in bad.items():
+        try:
+            gb.verify_firmware_image(data, "R630XXU0AZG2")
+        except gb.FirmwareError:
+            continue
+        raise AssertionError(f"{name} image was accepted")
+
+
+def test_download_or_verification_failure_sends_nothing():
+    daemon = ready_to_flash(make_image(model=b"SM-R510")[0])
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    assert daemon.socket.frames == []
+    assert daemon.state["firmware_install"]["stage"] == "failed"
+    assert daemon.state["firmware_install"]["error"].startswith("Nothing was sent")
+
+    daemon = ready_to_flash()
+    daemon.fetch_image = lambda build: (_ for _ in ()).throw(OSError("offline"))
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    assert daemon.socket.frames == [] and daemon.flash is None
+
+
+def test_session_error_connection_loss_cancel_and_watchdog_all_fail_safe():
+    daemon = ready_to_flash()
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    daemon.handle(gb.MSG_FOTA_OPEN, bytes([144]))
+    assert "session error 144" in daemon.state["firmware_install"]["error"] and daemon.flash is None
+
+    daemon = ready_to_flash()
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    daemon.handle(gb.MSG_FOTA_OPEN, bytes([0]))
+    daemon.disconnect()
+    assert daemon.state["firmware_install"]["stage"] == "failed" and daemon.flash is None
+
+    daemon = ready_to_flash()
+    sock = daemon.socket
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    daemon.command('{"cmd":"firmware_cancel"}')
+    assert daemon.state["firmware_install"]["error"].startswith("Cancelled") and sock.closed
+
+    daemon = ready_to_flash()
+    now = [1000.0]
+    daemon.clock = lambda: now[0]
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    daemon.handle(gb.MSG_FOTA_OPEN, bytes([0]))
+    now[0] += 19
+    daemon.flash_watchdog()
+    assert daemon.flash is not None
+    now[0] += 5
+    daemon.flash_watchdog()
+    assert daemon.flash is None and "stopped answering" in daemon.state["firmware_install"]["error"]
+
+
+def test_nothing_else_talks_to_the_earbuds_during_an_install():
+    daemon = ready_to_flash()
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    frames = len(daemon.socket.frames)
+    for line in ('{"cmd":"noise","value":"anc"}', '{"cmd":"cycle"}', '{"cmd":"spatial","value":true}'):
+        daemon.command(line)
+    assert len(daemon.socket.frames) == frames
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')   # second request ignored
+    assert len(daemon.socket.frames) == frames
+
+
+def test_fota_chunk_header_and_flags_survive_our_own_decoder():
+    data = bytes(range(250))
+    assert struct.unpack_from("<I", gb.fota_chunk(data, 0, 100))[0] == 0x80000000
+    assert struct.unpack_from("<I", gb.fota_chunk(data, 200, 100))[0] == 200
+    assert len(gb.fota_chunk(data, 200, 100)) == 4 + 50
+    assert gb.fota_chunk(data, 250, 100) is None
+    frame = gb.encode(gb.MSG_FOTA_DOWNLOAD_DATA, gb.fota_chunk(data, 0, 100), flags=gb.FLAG_RESPONSE | gb.FLAG_FRAGMENT)
+    assert struct.unpack_from("<H", frame, 1)[0] & 0xF000 == 0x3000
+    assert gb.decode(frame)[0][0][0] == gb.MSG_FOTA_DOWNLOAD_DATA
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):

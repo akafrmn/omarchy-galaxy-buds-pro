@@ -302,6 +302,32 @@ Panel {
   function setToggle(name, value) { if (service) service.setToggle(name, value) }
   function setCodec(profile) { if (service) service.setCodec(profile) }
 
+  // ---- firmware installation --------------------------------------------
+  readonly property var install: buds.firmware_install || null
+  readonly property string installStage: install ? String(install.stage || "") : ""
+  readonly property bool installActive: ["downloading", "opening", "waiting", "transferring",
+                                         "installing", "rebooting"].indexOf(installStage) >= 0
+  readonly property bool installCancellable: ["downloading", "opening", "waiting",
+                                              "transferring"].indexOf(installStage) >= 0
+  property bool confirmInstall: false
+  function installText() {
+    if (!install) return ""
+    var build = String(install.target || "")
+    var pct = install.percent !== undefined ? " · " + install.percent + "%" : ""
+    switch (installStage) {
+    case "downloading": return t("fwDownloading", "Downloading and verifying") + " " + build + "…"
+    case "opening": return t("fwOpening", "Starting the update…")
+    case "waiting": return t("fwWaiting", "Waiting for the earbuds…")
+    case "transferring": return t("fwTransferring", "Sending firmware to the earbuds") + pct
+    case "installing": return t("fwInstalling", "The earbuds are installing the update…")
+    case "rebooting": return t("fwRebooting", "The earbuds are restarting to finish. This takes about a minute.")
+    case "done": return t("fwDone", "Updated to") + " " + build + "."
+    case "failed": return String(install.error || t("fwFailed", "The update failed."))
+    case "refused": return t("fwRefused", "Not started:") + " " + (install.reasons || []).join(" ")
+    }
+    return ""
+  }
+
   // The glyph carries the mode on its own, the way the other bar icons do:
   // an ear that hears the room for ambient, a crossed-out one for ANC.
   function modeIcon() {
@@ -693,6 +719,112 @@ Panel {
             wrapMode: Text.WordWrap
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
+          }
+
+          Button {
+            visible: root.firmwareUpdate !== null && !root.install && !root.confirmInstall
+            text: root.t("fwInstall", "Install") + " " + (root.firmwareUpdate ? root.firmwareUpdate.build : "")
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            onClicked: root.confirmInstall = true
+          }
+
+          // Two clicks on purpose: this is the one action here that cannot be undone.
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.confirmInstall && root.firmwareUpdate !== null && !root.install
+
+            Text {
+              width: parent.width
+              text: root.t("fwConfirm",
+                    "Install " + (root.firmwareUpdate ? root.firmwareUpdate.build : "") + " on both earbuds? "
+                    + "It takes about 15 minutes. Keep both earbuds out of the closed case, charged and near "
+                    + "this computer, and leave Bluetooth on. The image comes from the community mirror of "
+                    + "Samsung's builds and is checked before anything is sent. If the transfer stops, the "
+                    + "earbuds keep their current firmware, but there is no recovery if an install goes wrong.")
+              color: root.foreground
+              wrapMode: Text.WordWrap
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Row {
+              spacing: Style.space(8)
+              Button {
+                text: root.t("fwInstallNow", "Install now")
+                bordered: true
+                foreground: root.urgent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                onClicked: {
+                  root.confirmInstall = false
+                  if (root.service && root.firmwareUpdate) root.service.installFirmware(root.firmwareUpdate.build)
+                }
+              }
+              Button {
+                text: root.t("fwNotNow", "Not now")
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                onClicked: root.confirmInstall = false
+              }
+            }
+          }
+        }
+
+        // ---------- Firmware installation: stays up while the earbuds restart ----------
+        Column {
+          width: parent.width
+          spacing: Style.space(6)
+          visible: root.install !== null
+
+          Text {
+            width: parent.width
+            text: root.installText()
+            color: root.installStage === "failed" || root.installStage === "refused" ? root.urgent : root.foreground
+            wrapMode: Text.WordWrap
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Rectangle {
+            width: parent.width
+            height: Style.space(6)
+            radius: height / 2
+            visible: root.installActive
+            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+
+            Rectangle {
+              width: parent.width * Math.max(0, Math.min(100, Number(root.install ? root.install.percent || 0 : 0))) / 100
+              height: parent.height
+              radius: parent.radius
+              color: root.foreground
+              Behavior on width { NumberAnimation { duration: 200 } }
+            }
+          }
+
+          Button {
+            visible: root.installCancellable
+            text: root.t("fwCancel", "Cancel")
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            onClicked: if (root.service) root.service.cancelFirmware()
+          }
+
+          Button {
+            visible: root.install !== null && !root.installActive
+            text: root.t("fwDismiss", "OK")
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            onClicked: if (root.service) root.service.dismissFirmware()
           }
         }
 

@@ -26,6 +26,10 @@ QtObject {
   function cycle() { send({"cmd": "cycle"}) }
   function setToggle(name, value) { send({"cmd": name, "value": value}) }
   function setCodec(profile) { send({"cmd": "codec", "value": profile}) }
+  // The helper re-checks every safeguard itself; this only asks.
+  function installFirmware(build) { send({"cmd": "firmware_install", "value": String(build || "")}) }
+  function cancelFirmware() { send({"cmd": "firmware_cancel"}) }
+  function dismissFirmware() { send({"cmd": "firmware_dismiss"}) }
 
   // Firmware update check. Starts off and follows the widget's setting (on by
   // default), so a user who turned it off never makes a single request.
@@ -163,5 +167,9 @@ QtObject {
       root.lowBatteryState.notified = false
       root.checkLowBattery()
     }
+    // Takes the exact build as confirmation, e.g. firmwareInstall R630XXU0AZG2.
+    function firmwareInstall(build: string): void { root.installFirmware(build) }
+    function firmwareCancel(): void { root.cancelFirmware() }
+    function firmwareDismiss(): void { root.dismissFirmware() }
   }
 }

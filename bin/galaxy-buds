@@ -49,6 +49,17 @@ MSG_SET_NOISE_REDUCTION = 152
 MSG_NOISE_REDUCTION_MODE_UPDATE = 155
 MSG_SET_SEAMLESS_CONNECTION = 175
 MSG_VERSION_INFO_LONG = 104
+MSG_FOTA_RESULT = 185
+MSG_FOTA_OPEN = 187
+MSG_FOTA_CONTROL = 188
+MSG_FOTA_DOWNLOAD_DATA = 189
+MSG_FOTA_UPDATE = 190
+FOTA_MESSAGES = (MSG_FOTA_RESULT, MSG_FOTA_OPEN, MSG_FOTA_CONTROL, MSG_FOTA_DOWNLOAD_DATA, MSG_FOTA_UPDATE)
+
+# Header flags. The host marks its answers to the earbuds' firmware requests
+# as responses, and the data chunks as fragments too.
+FLAG_RESPONSE = 0x1000
+FLAG_FRAGMENT = 0x2000
 
 MODES = {"off": 0, "anc": 1, "ambient": 2}
 MODE_NAMES = {v: k for k, v in MODES.items()}
@@ -173,13 +184,13 @@ def crc16(data):
     return crc
 
 
-def encode(msg_id, payload=b"", legacy=False):
+def encode(msg_id, payload=b"", legacy=False, flags=0):
     payload = bytes(payload)
     size = 1 + len(payload) + 2
     body = bytes([msg_id]) + payload
     # The original Buds put the message type and size in a byte each; everyone
-    # since packs both into one little-endian short.
-    header = bytes([0, size]) if legacy else struct.pack("<H", size)
+    # since packs both into one little-endian short, flags in the high bits.
+    header = bytes([0, size]) if legacy else struct.pack("<H", size | flags)
     som, eom = (LEGACY_SOM, LEGACY_EOM) if legacy else (SOM, EOM)
     return bytes([som]) + header + body + struct.pack("<H", crc16(body)) + bytes([eom])
 
@@ -463,6 +474,137 @@ def fetch_firmware_list(model):
         return json.loads(response.read(512 * 1024).decode("utf-8"))
 
 
+# ---- firmware installation ----------------------------------------------
+# Samsung's FOTA transfer, written from the protocol as documented by the
+# GalaxyBudsClient project (no code taken). The host offers a table of
+# segments; the earbuds then pull every byte by offset, verify the CRCs and
+# install. Every guard below exists because a wrong flash cannot be undone.
+FIRMWARE_DOWNLOAD_URL = os.environ.get("GALAXY_BUDS_FIRMWARE_DOWNLOAD_URL",
+                                       "https://fw.timschneeberger.me/v3/firmware/download/{build}")
+FIRMWARE_MAGIC = 0xCAFECAFE
+FIRMWARE_MAX_BYTES = 32 * 1024 * 1024
+FOTA_MTU_MAX = 650
+FLASH_MIN_BATTERY = 30
+FLASH_STEP_TIMEOUT = 30        # seconds of silence tolerated mid-transfer
+FLASH_REBOOT_TIMEOUT = 240     # install + reboot + reconnect
+FLASH_ACTIVE = ("downloading", "opening", "waiting", "transferring", "installing", "rebooting")
+FLASH_CANCELLABLE = ("downloading", "opening", "waiting", "transferring")
+FLASH_PLACEMENTS = ("wearing", "idle", "case")   # "case" here is the open case (3)
+
+
+class FirmwareError(ValueError):
+    pass
+
+
+def parse_firmware_image(data):
+    """Validate the container: magic, declared size, segment bounds and every
+    segment's CRC32. Returns {"crc", "segments": [{"id","crc","data"}]}."""
+    import zlib
+    data = bytes(data)
+    if len(data) < 16:
+        raise FirmwareError("file too small")
+    magic, total, count = struct.unpack_from("<IiI", data, 0)
+    if magic != FIRMWARE_MAGIC:
+        raise FirmwareError("not a Galaxy Buds firmware image")
+    if total != len(data):
+        raise FirmwareError("size does not match the header (truncated download?)")
+    if not 0 < count <= 32 or 12 + 16 * count > len(data) - 4:
+        raise FirmwareError("bad segment table")
+    segments = []
+    for index in range(count):
+        seg_id, crc, offset, size = struct.unpack_from("<iIii", data, 12 + 16 * index)
+        if seg_id < 0 or seg_id > 255 or size <= 0 or offset < 0 or offset + size > len(data) - 4:
+            raise FirmwareError(f"segment {index} out of bounds")
+        chunk = data[offset:offset + size]
+        if zlib.crc32(chunk) != crc:
+            raise FirmwareError(f"segment {seg_id} failed its CRC32 check")
+        segments.append({"id": seg_id, "crc": crc, "data": chunk})
+    return {"crc": struct.unpack_from("<I", data, len(data) - 4)[0], "segments": segments}
+
+
+def verify_firmware_image(data, build):
+    """The image must be the exact build asked for, for the model it names."""
+    image = parse_firmware_image(data)
+    decoded = decode_firmware(build)
+    if not decoded:
+        raise FirmwareError("unknown build name")
+    blob = bytes(data)
+    if ("SM-" + decoded["model"]).encode() not in blob:
+        raise FirmwareError(f"image is not for SM-{decoded['model']}")
+    # Sibling models share code (a Buds3 Pro image mentions SM-R530 once in a
+    # template), so the model name alone proves little. The build strings do:
+    # every one in the image must be exactly the build asked for.
+    builds = set(re.findall(rb"R[0-9]{3}[A-Z]{2}[A-Z0-9]{6}", blob))
+    if builds != {build.encode()}:
+        found = b", ".join(sorted(builds)).decode() or "none"
+        raise FirmwareError(f"image builds ({found}) do not match {build}")
+    return image
+
+
+def fota_open_payload(image):
+    out = struct.pack("<IB", image["crc"], len(image["segments"]))
+    for segment in image["segments"]:
+        out += struct.pack("<BII", segment["id"], len(segment["data"]), segment["crc"])
+    return out
+
+
+def fota_chunk(data, offset, mtu):
+    """One data response: u32 header (offset, top bit set while more of the
+    segment follows) and the bytes. None past the end of the segment."""
+    if offset >= len(data) or mtu <= 0:
+        return None
+    chunk = data[offset:offset + mtu]
+    last = offset + mtu >= len(data)
+    header = offset & 0x7FFFFFFF
+    if not last:
+        header |= 0x80000000
+    return struct.pack("<I", header) + chunk
+
+
+def flash_preflight(state, profile, target):
+    """Reasons to refuse installing `target`; empty means safe to start."""
+    reasons = []
+    firmware = state.get("firmware") or {}
+    current = (firmware.get("build") or {}).get("build")
+    offered = (state.get("firmware_update") or {}).get("build")
+    if not state.get("connected"):
+        reasons.append("The earbuds are not connected.")
+    if not profile_get(profile, "fw_model"):
+        reasons.append("This model is not recognised.")
+    if not current:
+        reasons.append("The installed firmware is not known yet.")
+    if not target or target != offered:
+        reasons.append("Only the update the panel offers can be installed.")
+    else:
+        mine, theirs = decode_firmware(current), decode_firmware(target)
+        if not (mine and theirs) or mine["model"] != theirs["model"]:
+            reasons.append("That build is for a different model.")
+        elif firmware_key(theirs) <= firmware_key(mine):
+            reasons.append("Only upgrades are allowed; downgrades can brick the earbuds.")
+    if firmware.get("mismatch") or not (firmware.get("left") and firmware.get("right")):
+        reasons.append("Both earbuds must be connected and on the same firmware.")
+    placement = state.get("placement") or {}
+    wearing = state.get("wearing") or {}
+    for side in ("left", "right"):
+        if placement.get(side) not in FLASH_PLACEMENTS or wearing.get(side) in (0, 4):
+            reasons.append(f"The {side} earbud must be connected and out of the closed case.")
+        level = (state.get("battery") or {}).get(side)
+        if not isinstance(level, int) or level < FLASH_MIN_BATTERY:
+            reasons.append(f"The {side} earbud needs at least {FLASH_MIN_BATTERY}% battery.")
+    return reasons
+
+
+def fetch_firmware_image(build):
+    import urllib.request
+    request = urllib.request.Request(FIRMWARE_DOWNLOAD_URL.format(build=build), headers={
+        "User-Agent": f"omarchy-galaxy-buds-pro/{plugin_version()}"})
+    with urllib.request.urlopen(request, timeout=120) as response:
+        data = response.read(FIRMWARE_MAX_BYTES + 1)
+    if len(data) > FIRMWARE_MAX_BYTES:
+        raise FirmwareError("download larger than any firmware image")
+    return data
+
+
 def lock_payload(shape, enabled, touch):
     """Touch gestures on/off. Re-sends the gesture bits we last read so turning
     the touchpad back on restores what was set, not a blank slate."""
@@ -615,6 +757,10 @@ class Daemon:
         self.fetch_firmware = fetch_firmware_list
         self.spawn = lambda job: threading.Thread(target=job, daemon=True).start()
         self.defer = lambda job: job()
+        # Firmware installation in progress, or None.
+        self.flash = None
+        self.fetch_image = fetch_firmware_image
+        self.clock = time.monotonic
 
     # ---- output ----------------------------------------------------------
     def emit(self):
@@ -759,6 +905,7 @@ class Daemon:
         self.buffer = b""
         self.connecting = False
         self.update({"connected": False, "reason": "disconnected"})
+        self.flash_on_disconnect()
 
     def on_readable(self, fd, condition):
         from gi.repository import GLib
@@ -781,6 +928,12 @@ class Daemon:
         if DEBUG:
             print(f"<< {msg_id} {payload.hex(' ')}", file=sys.stderr, flush=True)
         kind = self.profile["noise"][0]
+        if msg_id in FOTA_MESSAGES:
+            try:
+                self.handle_fota(msg_id, payload)
+            except (IndexError, struct.error):
+                self.flash_fail("The earbuds sent a firmware message this plugin does not understand.")
+            return
         try:
             if msg_id == MSG_EXTENDED_STATUS:
                 self.update(parse_extended_status(payload, self.profile))
@@ -811,6 +964,7 @@ class Daemon:
         # Different builds per bud is what makes Samsung's updater fail.
         firmware["mismatch"] = len(set(builds.values())) > 1
         self.update({"firmware": firmware})
+        self.flash_after_version()
         self.check_firmware()
 
     def check_firmware(self):
@@ -858,6 +1012,178 @@ class Daemon:
         elif self.state.pop("firmware_update", None):
             self.emit()
 
+    # ---- firmware installation -------------------------------------------
+    def flash_state(self, **values):
+        info = dict(self.state.get("firmware_install") or {})
+        info.update(values)
+        self.update({"firmware_install": info})
+
+    def flash_fail(self, message):
+        if not self.flash:
+            return
+        target = self.flash.get("target")
+        self.flash = None
+        self.flash_state(stage="failed", target=target, error=message)
+
+    def flash_deadline(self, seconds):
+        if self.flash:
+            self.flash["deadline"] = self.clock() + seconds
+
+    def install_firmware(self, target):
+        if self.flash:
+            return
+        reasons = flash_preflight(self.state, self.profile, target)
+        if reasons:
+            self.update({"firmware_install": {"stage": "refused", "target": target, "reasons": reasons}})
+            return
+        self.flash = {"target": target, "stage": "downloading", "image": None, "mtu": 0, "segment": None}
+        self.update({"firmware_install": {"stage": "downloading", "target": target, "percent": 0}})
+        self.flash_deadline(FLASH_REBOOT_TIMEOUT)
+
+        def job():
+            try:
+                image = verify_firmware_image(self.fetch_image(target), target)
+            except Exception as error:  # network, TLS, verification
+                message = str(error) if isinstance(error, FirmwareError) else "Download failed."
+                self.defer(lambda: self.flash_fail(f"Nothing was sent to the earbuds: {message}") or False)
+                return
+            self.defer(lambda: self.start_transfer(image, target) or False)
+
+        self.spawn(job)
+
+    def start_transfer(self, image, target):
+        if not self.flash or self.flash["target"] != target:
+            return
+        # Things may have changed during the download: check again.
+        reasons = flash_preflight(self.state, self.profile, target)
+        if reasons:
+            self.flash = None
+            self.update({"firmware_install": {"stage": "refused", "target": target, "reasons": reasons}})
+            return
+        self.flash.update(image=image, stage="opening")
+        self.flash_state(stage="opening", percent=0)
+        self.flash_deadline(20)
+        self.send(MSG_FOTA_OPEN, fota_open_payload(image))
+
+    def handle_fota(self, msg_id, payload):
+        flash = self.flash
+        if not flash or not flash.get("image"):
+            return
+        if msg_id == MSG_FOTA_OPEN:
+            if payload[0] != 0:
+                self.flash_fail(f"The earbuds refused the update (session error {payload[0]}). "
+                                "Their firmware is unchanged.")
+                return
+            flash["stage"] = "waiting"
+            self.flash_state(stage="waiting")
+            self.flash_deadline(20)
+        elif msg_id == MSG_FOTA_CONTROL:
+            control, value = payload[0], struct.unpack_from("<h", payload, 1)[0]
+            if control == 0:
+                flash["mtu"] = max(1, min(value, FOTA_MTU_MAX))
+                self.send_flagged(MSG_FOTA_CONTROL, struct.pack("<Bh", 0, flash["mtu"]), FLAG_RESPONSE)
+            elif control == 1:
+                flash["segment"] = value
+                self.send_flagged(MSG_FOTA_CONTROL, struct.pack("<Bh", 1, value), FLAG_RESPONSE)
+            self.flash_deadline(FLASH_STEP_TIMEOUT)
+        elif msg_id == MSG_FOTA_DOWNLOAD_DATA:
+            offset = struct.unpack_from("<I", payload, 0)[0] & 0x7FFFFFFF
+            count = payload[4]
+            segment = next((s for s in flash["image"]["segments"] if s["id"] == flash["segment"]), None)
+            if segment is None or not flash["mtu"]:
+                self.flash_fail("The earbuds asked for data before the transfer was set up.")
+                return
+            if flash["stage"] != "transferring":
+                flash["stage"] = "transferring"
+            data, mtu = segment["data"], flash["mtu"]
+            for index in range(count):
+                chunk = fota_chunk(data, offset + mtu * index, mtu)
+                if chunk is None:
+                    break
+                self.send_flagged(MSG_FOTA_DOWNLOAD_DATA, chunk, FLAG_RESPONSE | FLAG_FRAGMENT, quiet=True)
+            sent = sum(len(s["data"]) for s in flash["image"]["segments"] if s["id"] < segment["id"])
+            total = sum(len(s["data"]) for s in flash["image"]["segments"])
+            done = min(len(data), offset + mtu * count)
+            self.flash_state(stage="transferring", percent=min(99, int(100 * (sent + done) / total)))
+            self.flash_deadline(FLASH_STEP_TIMEOUT)
+        elif msg_id == MSG_FOTA_UPDATE:
+            if payload[0] == 0:
+                self.flash_state(stage=flash["stage"], percent=min(99, payload[1]))
+                self.flash_deadline(FLASH_STEP_TIMEOUT)
+            elif payload[0] == 1:
+                self.send_flagged(MSG_FOTA_UPDATE, bytes([1]), FLAG_RESPONSE)
+                if payload[1] != 0:
+                    self.flash_fail(f"The earbuds could not store the update (error {payload[2]}). "
+                                    "Their firmware is unchanged.")
+                    return
+                flash["stage"] = "installing"
+                self.flash_state(stage="installing", percent=100)
+                self.flash_deadline(FLASH_REBOOT_TIMEOUT)
+        elif msg_id == MSG_FOTA_RESULT:
+            self.send_flagged(MSG_FOTA_RESULT, bytes([1]), FLAG_RESPONSE)
+            if payload[0] != 0:
+                self.flash_fail(f"The earbuds rejected the update after checking it (error {payload[1]}). "
+                                "Their firmware is unchanged.")
+                return
+            flash["stage"] = "rebooting"
+            self.flash_state(stage="rebooting", percent=100)
+            self.flash_deadline(FLASH_REBOOT_TIMEOUT)
+
+    def flash_after_version(self):
+        """Called with every version report: after an install, it is the proof."""
+        if not self.flash or self.flash["stage"] not in ("installing", "rebooting"):
+            return
+        target = self.flash["target"]
+        current = ((self.state.get("firmware") or {}).get("build") or {}).get("build")
+        if current == target:
+            self.flash = None
+            self.state.pop("firmware_update", None)
+            self.firmware_checked.clear()
+            self.update({"firmware_install": {"stage": "done", "target": target}})
+        elif self.flash.get("seen_disconnect"):
+            self.flash_fail(f"The earbuds restarted on {current}; the update did not apply.")
+
+    def flash_on_disconnect(self):
+        if not self.flash:
+            return
+        if self.flash["stage"] in ("installing", "rebooting"):
+            self.flash["seen_disconnect"] = True   # expected: they restart to install
+        elif self.flash["stage"] != "downloading":
+            self.flash_fail("The connection dropped during the transfer. "
+                            "The earbuds cancel it themselves and keep their current firmware.")
+
+    def cancel_firmware(self):
+        if not self.flash or self.flash["stage"] not in FLASH_CANCELLABLE:
+            return
+        stage = self.flash["stage"]
+        self.flash_fail("Cancelled. The earbuds keep their current firmware.")
+        # Dropping the link is how a transfer is aborted; the retry timer
+        # reconnects a few seconds later.
+        if stage != "downloading":
+            self.disconnect()
+
+    def flash_watchdog(self):
+        if self.flash and self.clock() > self.flash.get("deadline", float("inf")):
+            stage = self.flash["stage"]
+            if stage in ("installing", "rebooting"):
+                self.flash_fail("The earbuds did not come back with the new firmware. Put them in the "
+                                "case for a minute, take them out, and check the version shown here.")
+            else:
+                self.flash_fail("The earbuds stopped answering. They keep their current firmware.")
+                if stage != "downloading":
+                    self.disconnect()
+        return True
+
+    def send_flagged(self, msg_id, payload, flags, quiet=False):
+        if not self.socket:
+            return
+        if DEBUG and not quiet:
+            print(f">> {msg_id} {bytes(payload).hex(' ')} flags={flags:#x}", file=sys.stderr, flush=True)
+        try:
+            self.socket.sendall(encode(msg_id, payload, profile_get(self.profile, "legacy_frame"), flags))
+        except OSError:
+            self.disconnect()
+
     def handle_ack(self, acked, params):
         """The earbuds answer our commands with an ack carrying the value they
         actually applied, so the UI reflects the device rather than our guess."""
@@ -904,6 +1230,19 @@ class Daemon:
             return
         name = request.get("cmd")
         value = request.get("value")
+        if name == "firmware_install":
+            self.install_firmware(value if isinstance(value, str) else "")
+            return
+        if name == "firmware_cancel":
+            self.cancel_firmware()
+            return
+        if name == "firmware_dismiss":
+            if not self.flash and self.state.pop("firmware_install", None):
+                self.emit()
+            return
+        # Nothing else may talk to the earbuds while they take a firmware image.
+        if self.flash and name != "refresh":
+            return
         modes = self.state.get("modes") or list(UNKNOWN_PROFILE["modes"])
         kind = self.profile["noise"][0]
 
@@ -1017,6 +1356,7 @@ class Daemon:
         # The lookup runs on a worker thread; its result joins the main loop.
         self.defer = lambda job: GLib.idle_add(job)
         GLib.timeout_add_seconds(3600, self.check_firmware)
+        GLib.timeout_add_seconds(2, self.flash_watchdog)
         GLib.timeout_add_seconds(5, self.register_profile)
         self.connect()
         self.refresh_audio()
