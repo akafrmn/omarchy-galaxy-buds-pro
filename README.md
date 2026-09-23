@@ -8,7 +8,7 @@ Samsung **Galaxy Buds Pro, Buds2 Pro, Buds3 Pro and Buds4 Pro** in the Omarchy
 bar: noise control, per-earbud and case battery, low battery warnings, the
 Bluetooth codec, 360 Audio, touch controls and quick connect.
 
-![The Galaxy Buds Pro panel](preview.png)
+![The panel on a Galaxy Buds3 Pro: left bud charging in the case, right bud worn, ANC on](preview.png)
 
 The icon follows the earbuds, not the other way around: change the mode by
 touching an earbud or from your phone and the bar updates immediately.
@@ -21,7 +21,7 @@ touching an earbud or from your phone and the bar updates immediately.
   about a battery that is simply not being reported.
 - **One notification, not one per monitor**, when a bud runs low.
 
-![The bar icon, showing ANC is on](docs/bar.png)
+![The bar icon among the other Omarchy indicators](docs/bar.png)
 
 ## Compatibility
 
@@ -171,6 +171,8 @@ controls with one earbud** is enabled in Galaxy Wearable. Ambient still works.
 On Buds3, Buds3 Pro, Buds4 and Buds4 Pro the plugin reads that setting and
 shows a hint under the mode buttons instead of a click that silently does
 nothing. The panel always shows the mode the earbuds actually applied.
+
+![One earbud worn: the panel explains why ANC stays off](docs/one-earbud.png)
 
 ## Codec
 
