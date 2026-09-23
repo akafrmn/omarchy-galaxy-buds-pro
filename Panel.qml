@@ -310,15 +310,49 @@ Panel {
   readonly property bool installCancellable: ["downloading", "opening", "waiting",
                                               "transferring"].indexOf(installStage) >= 0
   property bool confirmInstall: false
+  readonly property var firmwareLatest: buds.firmware_latest || ({})
+  readonly property int installStep: ({"downloading": 0, "opening": 1, "waiting": 1, "transferring": 1,
+                                       "installing": 2, "rebooting": 3, "done": 4})[installStage] ?? -1
+  readonly property var installSteps: [t("fwStepDownload", "Download"), t("fwStepSend", "Send"),
+                                       t("fwStepInstall", "Install"), t("fwStepRestart", "Restart")]
+  // A bar that fills only where there is a real percentage; elsewhere it slides.
+  readonly property bool installDeterminate: (installStage === "downloading" && install && install.total > 0)
+                                             || installStage === "transferring"
+  function megabytes(n) { return (Number(n || 0) / 1048576).toFixed(1) }
+  function firmwareStatusText() {
+    switch (String(firmwareLatest.status || "")) {
+    case "latest":
+      var at = firmwareLatest.checked ? new Date(firmwareLatest.checked * 1000) : null
+      return "✓ " + t("fwLatest", "Latest version") + (at ? "  ·  " + t("fwChecked", "checked") + " "
+             + Qt.formatTime(at, "hh:mm") : "")
+    case "checking": return t("fwChecking", "Checking…")
+    case "unknown": return t("fwUnknown", "Couldn't check for updates")
+    }
+    return ""
+  }
+  function installDetail() {
+    if (!install) return ""
+    if (installStage === "downloading" && install.total > 0)
+      return megabytes(install.bytes) + " " + t("fwOf", "of") + " " + megabytes(install.total) + " MB"
+    if (installStage === "transferring" && install.total > 0) {
+      var line = megabytes(install.bytes) + " " + t("fwOf", "of") + " " + megabytes(install.total) + " MB"
+      var eta = install.eta
+      if (eta !== undefined && eta !== null)
+        line += "  ·  " + (eta < 60 ? t("fwAbout", "about") + " " + Math.max(5, Math.round(eta / 5) * 5) + " s"
+                                     : t("fwAbout", "about") + " " + Math.round(eta / 60) + " min")
+                + " " + t("fwLeft", "left")
+      return line
+    }
+    return ""
+  }
   function installText() {
     if (!install) return ""
     var build = String(install.target || "")
-    var pct = install.percent !== undefined ? " · " + install.percent + "%" : ""
     switch (installStage) {
     case "downloading": return t("fwDownloading", "Downloading and verifying") + " " + build + "…"
     case "opening": return t("fwOpening", "Starting the update…")
     case "waiting": return t("fwWaiting", "Waiting for the earbuds…")
-    case "transferring": return t("fwTransferring", "Sending firmware to the earbuds") + pct
+    case "transferring": return t("fwTransferring", "Sending firmware to the earbuds")
     case "installing": return t("fwInstalling", "The earbuds are installing the update…")
     case "rebooting": return t("fwRebooting", "The earbuds are restarting to finish. This takes about a minute.")
     case "done": return t("fwDone", "Updated to") + " " + build + "."
@@ -698,6 +732,17 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
+          // Said out loud, so "no notice" never has to be read as "up to date".
+          Text {
+            width: parent.width
+            visible: text !== ""
+            text: root.firmwareStatusText()
+            color: root.firmwareLatest.status === "latest" ? root.foreground : root.dim
+            wrapMode: Text.WordWrap
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
           Text {
             width: parent.width
             visible: root.firmwareUpdate !== null && root.install === null
@@ -791,20 +836,85 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
-          Rectangle {
+          // Download · Send · Install · Restart, ticked off as they finish.
+          Row {
+            spacing: Style.space(10)
+            visible: root.installStep >= 0
+            Repeater {
+              model: root.installSteps
+              Text {
+                required property var modelData
+                required property int index
+                text: (index < root.installStep ? "✓ " : index === root.installStep ? "● " : "○ ") + modelData
+                color: index === root.installStep ? root.foreground : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: index === root.installStep
+              }
+            }
+          }
+
+          Item {
             width: parent.width
-            height: Style.space(6)
-            radius: height / 2
+            height: Style.space(14)
             visible: root.installActive
-            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
 
             Rectangle {
-              width: parent.width * Math.max(0, Math.min(100, Number(root.install ? root.install.percent || 0 : 0))) / 100
-              height: parent.height
-              radius: parent.radius
-              color: root.foreground
-              Behavior on width { NumberAnimation { duration: 200 } }
+              id: installTrack
+              anchors.left: parent.left
+              anchors.right: installPercent.left
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              height: Style.space(6)
+              radius: height / 2
+              clip: true
+              color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+
+              Rectangle {
+                visible: root.installDeterminate
+                width: installTrack.width * Math.max(0, Math.min(100, Number(root.install ? root.install.percent || 0 : 0))) / 100
+                height: parent.height
+                radius: parent.radius
+                color: root.foreground
+                Behavior on width { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
+              }
+
+              // No percentage to show: a segment slides so it never looks frozen.
+              Rectangle {
+                id: slider
+                visible: !root.installDeterminate
+                width: installTrack.width * 0.3
+                height: parent.height
+                radius: parent.radius
+                color: root.foreground
+                SequentialAnimation on x {
+                  running: slider.visible && root.installActive
+                  loops: Animation.Infinite
+                  NumberAnimation { from: -slider.width; to: installTrack.width; duration: 1400; easing.type: Easing.InOutQuad }
+                }
+              }
             }
+
+            Text {
+              id: installPercent
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(40)
+              horizontalAlignment: Text.AlignRight
+              text: root.installDeterminate && root.install ? Number(root.install.percent || 0) + "%" : ""
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          Text {
+            width: parent.width
+            visible: text !== ""
+            text: root.installDetail()
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
           }
 
           Button {

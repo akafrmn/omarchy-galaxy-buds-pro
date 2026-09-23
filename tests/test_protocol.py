@@ -732,7 +732,12 @@ def ready_to_flash(image_bytes=None, target="R630XXU0AZG2"):
     daemon.spawn = lambda job: job()
     daemon.socket = FakeSocket()
     image_bytes = image_bytes or make_image()[0]
-    daemon.fetch_image = lambda build: image_bytes
+    def fetch_image(build, progress=lambda done, total: None):
+        # Report the download in three steps like a real chunked read.
+        for part in (1, 2, 3):
+            progress(len(image_bytes) * part // 3, len(image_bytes))
+        return image_bytes
+    daemon.fetch_image = fetch_image
     daemon.state.update({
         "connected": True,
         "firmware": {"left": "R630XXU0AZD2", "right": "R630XXU0AZD2", "mismatch": False,
@@ -874,7 +879,7 @@ def test_download_or_verification_failure_sends_nothing():
     assert daemon.state["firmware_install"]["error"].startswith("Nothing was sent")
 
     daemon = ready_to_flash()
-    daemon.fetch_image = lambda build: (_ for _ in ()).throw(OSError("offline"))
+    daemon.fetch_image = lambda build, progress: (_ for _ in ()).throw(OSError("offline"))
     daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
     assert daemon.socket.frames == [] and daemon.flash is None
 
@@ -930,6 +935,74 @@ def test_fota_chunk_header_and_flags_survive_our_own_decoder():
     frame = gb.encode(gb.MSG_FOTA_DOWNLOAD_DATA, gb.fota_chunk(data, 0, 100), flags=gb.FLAG_RESPONSE | gb.FLAG_FRAGMENT)
     assert struct.unpack_from("<H", frame, 1)[0] & 0xF000 == 0x3000
     assert gb.decode(frame)[0][0][0] == gb.MSG_FOTA_DOWNLOAD_DATA
+
+
+def test_firmware_status_says_latest_available_unknown_or_off():
+    daemon = firmware_daemon(lambda model: LIVE_BUILDS[1:])   # AZD2 is the newest listed
+    daemon.firmware_check = True
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
+    assert daemon.state["firmware_latest"]["status"] == "latest"
+    assert isinstance(daemon.state["firmware_latest"]["checked"], int)
+
+    daemon = firmware_daemon(lambda model: LIVE_BUILDS)
+    daemon.firmware_check = True
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
+    assert daemon.state["firmware_latest"]["status"] == "available"
+
+    calls = []
+    def offline(model):
+        calls.append(model)
+        raise OSError("offline")
+    daemon = firmware_daemon(offline)
+    daemon.firmware_check = True
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
+    assert daemon.state["firmware_latest"]["status"] == "unknown"
+    daemon.check_firmware()   # a failure is retried at the next chance, not in 12 hours
+    assert len(calls) == 2
+
+    daemon = firmware_daemon(lambda model: {"not": "a list"})
+    daemon.firmware_check = True
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
+    assert daemon.state["firmware_latest"]["status"] == "unknown"
+
+    daemon.command('{"cmd":"firmware_check","value":false}')
+    assert daemon.state["firmware_latest"]["status"] == "off"
+
+
+def test_firmware_status_is_checking_while_the_lookup_runs():
+    pending = []
+    daemon = firmware_daemon(lambda model: LIVE_BUILDS)
+    daemon.spawn = pending.append          # hold the worker
+    daemon.firmware_check = True
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
+    assert daemon.state["firmware_latest"] == {"status": "checking"}
+    pending[0]()
+    assert daemon.state["firmware_latest"]["status"] == "available"
+
+
+def test_install_reports_download_and_transfer_progress():
+    image, datas = make_image(segments=((6, 3000),))
+    daemon = ready_to_flash(image)
+    seen = []
+    daemon.emit = lambda: seen.append(dict(daemon.state.get("firmware_install") or {}))
+    now = [0.0]
+    daemon.clock = lambda: now[0]
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    downloads = [s for s in seen if s.get("stage") == "downloading" and s.get("total")]
+    assert [s["percent"] for s in downloads] == [33, 66, 100]
+    assert downloads[-1]["bytes"] == len(image)
+
+    daemon.handle(gb.MSG_FOTA_OPEN, bytes([0]))
+    daemon.handle(gb.MSG_FOTA_CONTROL, struct.pack("<Bh", 0, 100))
+    daemon.handle(gb.MSG_FOTA_CONTROL, struct.pack("<Bh", 1, 6))
+    daemon.handle(gb.MSG_FOTA_DOWNLOAD_DATA, struct.pack("<I", 0) + bytes([5]))
+    first = daemon.state["firmware_install"]
+    assert (first["bytes"], first["total"], first["eta"]) == (500, 3000, None)   # too early to guess
+    now[0] = 10.0
+    daemon.handle(gb.MSG_FOTA_DOWNLOAD_DATA, struct.pack("<I", 500) + bytes([10]))
+    later = daemon.state["firmware_install"]
+    assert later["bytes"] == 1500 and later["percent"] == 50
+    assert later["eta"] == 10   # 1500 bytes took 10 s, 1500 left
 
 if __name__ == "__main__":
     failures = 0

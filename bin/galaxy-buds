@@ -594,15 +594,23 @@ def flash_preflight(state, profile, target):
     return reasons
 
 
-def fetch_firmware_image(build):
+def fetch_firmware_image(build, progress=lambda done, total: None):
+    """Download into memory in chunks, reporting (bytes so far, total or 0)."""
     import urllib.request
     request = urllib.request.Request(FIRMWARE_DOWNLOAD_URL.format(build=build), headers={
         "User-Agent": f"omarchy-galaxy-buds-pro/{plugin_version()}"})
     with urllib.request.urlopen(request, timeout=120) as response:
-        data = response.read(FIRMWARE_MAX_BYTES + 1)
-    if len(data) > FIRMWARE_MAX_BYTES:
-        raise FirmwareError("download larger than any firmware image")
-    return data
+        total = int(response.headers.get("Content-Length") or 0)
+        data = bytearray()
+        while True:
+            chunk = response.read(64 * 1024)
+            if not chunk:
+                break
+            data += chunk
+            if len(data) > FIRMWARE_MAX_BYTES:
+                raise FirmwareError("download larger than any firmware image")
+            progress(len(data), total)
+    return bytes(data)
 
 
 def lock_payload(shape, enabled, touch):
@@ -983,6 +991,7 @@ class Daemon:
                 self.show_firmware_update(self.firmware_results[(model, build)])
             return True
         self.firmware_checked[(model, build)] = now
+        self.update({"firmware_latest": {"status": "checking"}})
 
         def job():
             try:
@@ -990,13 +999,24 @@ class Daemon:
             except Exception as error:  # network, TLS, JSON: never fatal
                 if DEBUG:
                     print(f"firmware check failed: {error!r}", file=sys.stderr, flush=True)
+                self.defer(lambda: self.firmware_check_failed(model, build))
                 return
             self.defer(lambda: self.apply_firmware_list(entries, build))
 
         self.spawn(job)
         return True
 
+    def firmware_check_failed(self, model, build):
+        # Let the next connect or hourly tick try again rather than waiting 12 h.
+        self.firmware_checked.pop((model, build), None)
+        if self.firmware_check:
+            self.update({"firmware_latest": {"status": "unknown"}})
+        return False
+
     def apply_firmware_list(self, entries, build):
+        if not isinstance(entries, list) or not any(decode_firmware(e.get("buildName"))
+                                                    for e in entries if isinstance(e, dict)):
+            return self.firmware_check_failed(profile_get(self.profile, "fw_model"), build)
         newer = latest_build(entries, build)
         notice = {"build": newer["build"], "label": newer["label"]} if newer else None
         self.firmware_results[(profile_get(self.profile, "fw_model"), build)] = notice
@@ -1006,11 +1026,13 @@ class Daemon:
         return False
 
     def show_firmware_update(self, notice):
+        self.state["firmware_latest"] = {"status": "available" if notice else "latest",
+                                         "checked": int(time.time())}
         if notice:
-            if self.state.get("firmware_update") != notice:
-                self.update({"firmware_update": notice})
-        elif self.state.pop("firmware_update", None):
-            self.emit()
+            self.state["firmware_update"] = notice
+        else:
+            self.state.pop("firmware_update", None)
+        self.emit()
 
     # ---- firmware installation -------------------------------------------
     def flash_state(self, **values):
@@ -1040,9 +1062,17 @@ class Daemon:
         self.update({"firmware_install": {"stage": "downloading", "target": target, "percent": 0}})
         self.flash_deadline(FLASH_REBOOT_TIMEOUT)
 
+        last = [-1]
+
+        def progress(done, total):
+            percent = int(100 * done / total) if total else 0
+            if percent != last[0]:
+                last[0] = percent
+                self.defer(lambda: self.flash_download_progress(target, done, total, percent) or False)
+
         def job():
             try:
-                image = verify_firmware_image(self.fetch_image(target), target)
+                image = verify_firmware_image(self.fetch_image(target, progress), target)
             except Exception as error:  # network, TLS, verification
                 message = str(error) if isinstance(error, FirmwareError) else "Download failed."
                 self.defer(lambda: self.flash_fail(f"Nothing was sent to the earbuds: {message}") or False)
@@ -1050,6 +1080,11 @@ class Daemon:
             self.defer(lambda: self.start_transfer(image, target) or False)
 
         self.spawn(job)
+
+    def flash_download_progress(self, target, done, total, percent):
+        if self.flash and self.flash["target"] == target and self.flash["stage"] == "downloading":
+            self.flash_state(stage="downloading", percent=percent, bytes=done, total=total)
+            self.flash_deadline(FLASH_REBOOT_TIMEOUT)
 
     def start_transfer(self, image, target):
         if not self.flash or self.flash["target"] != target:
@@ -1061,7 +1096,8 @@ class Daemon:
             self.update({"firmware_install": {"stage": "refused", "target": target, "reasons": reasons}})
             return
         self.flash.update(image=image, stage="opening")
-        self.flash_state(stage="opening", percent=0)
+        self.flash_state(stage="opening", percent=0, bytes=0,
+                         total=sum(len(s["data"]) for s in image["segments"]))
         self.flash_deadline(20)
         self.send(MSG_FOTA_OPEN, fota_open_payload(image))
 
@@ -1095,6 +1131,7 @@ class Daemon:
                 return
             if flash["stage"] != "transferring":
                 flash["stage"] = "transferring"
+                flash["started"] = self.clock()
             data, mtu = segment["data"], flash["mtu"]
             for index in range(count):
                 chunk = fota_chunk(data, offset + mtu * index, mtu)
@@ -1103,8 +1140,12 @@ class Daemon:
                 self.send_flagged(MSG_FOTA_DOWNLOAD_DATA, chunk, FLAG_RESPONSE | FLAG_FRAGMENT, quiet=True)
             sent = sum(len(s["data"]) for s in flash["image"]["segments"] if s["id"] < segment["id"])
             total = sum(len(s["data"]) for s in flash["image"]["segments"])
-            done = min(len(data), offset + mtu * count)
-            self.flash_state(stage="transferring", percent=min(99, int(100 * (sent + done) / total)))
+            done = sent + min(len(data), offset + mtu * count)
+            elapsed = self.clock() - flash["started"]
+            # Estimate from the rate so far, once there is enough of it to mean something.
+            eta = int(elapsed * (total - done) / done) if done and elapsed >= 3 else None
+            self.flash_state(stage="transferring", percent=min(99, int(100 * done / total)),
+                             bytes=done, total=total, eta=eta)
             self.flash_deadline(FLASH_STEP_TIMEOUT)
         elif msg_id == MSG_FOTA_UPDATE:
             if payload[0] == 0:
@@ -1271,8 +1312,9 @@ class Daemon:
             self.firmware_check = value is True
             if self.firmware_check:
                 self.check_firmware()
-            elif self.state.pop("firmware_update", None):
-                self.emit()
+            else:
+                self.state.pop("firmware_update", None)
+                self.update({"firmware_latest": {"status": "off"}})
 
     def on_stdin(self, fd, condition):
         # Read the fd directly rather than through sys.stdin: readline() pulls a
