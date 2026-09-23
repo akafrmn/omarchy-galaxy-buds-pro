@@ -1,15 +1,12 @@
 # AGENTS.md
 
-## Commit workflow
+Omarchy shell plugin `io.github.akafrmn.galaxy-buds-pro`. See CONTRIBUTING.md for layout and the
+dev loop.
 
-Commit every time you change code in this repo — don't batch unrelated changes into one commit.
-
-After every `git commit` in this repo, run:
-
-```
-omarchy plugin update io.github.akafrmn.galaxy-buds-pro --yes
-```
-
-This refreshes the installed Omarchy plugin so local testing reflects the latest commit.
-
-Then run `omarchy-restart-shell` to reload the live shell — do this every time without asking first, so QML/Panel changes are visible immediately.
+- Run `make check` before every commit; commit per logical change with a conventional message.
+- Model differences live only in `PROFILES` in `bin/galaxy-buds`; every row change gets a test.
+- GalaxyBudsClient is GPL-3.0: use it for protocol facts, never copy code.
+- After changing `Service.qml` or `bin/galaxy-buds`, `make dev-install && omarchy-restart-shell`
+  to see it live; QML-only changes hot-reload.
+- Keep the plugin dependency-free (system python, dbus-python, PyGObject only). Never write files
+  or elevate.

@@ -1,255 +1,284 @@
-# Galaxy Buds — Omarchy plugin
+# Galaxy Buds Pro for Omarchy
 
-![The Galaxy Buds panel](preview.png)
+[![CI](https://github.com/akafrmn/omarchy-galaxy-buds-pro/actions/workflows/ci.yml/badge.svg)](https://github.com/akafrmn/omarchy-galaxy-buds-pro/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Omarchy 4](https://img.shields.io/badge/Omarchy-4-black.svg)](https://omarchy.org/manual/shell-plugins/)
 
-Noise control for Samsung Galaxy Buds in the Omarchy bar. Click the ear icon to
-switch noise modes, see the battery of each earbud as a bar, and toggle
-**360 Audio**, **touch controls** and **quick connect**.
+Samsung **Galaxy Buds Pro, Buds2 Pro, Buds3 Pro and Buds4 Pro** in the Omarchy
+bar: noise control, per-earbud and case battery, low battery warnings, the
+Bluetooth codec, 360 Audio, touch controls and quick connect.
+
+![The Galaxy Buds Pro panel](preview.png)
 
 The icon follows the earbuds, not the other way around: change the mode by
 touching an earbud or from your phone and the bar updates immediately.
 
-Controls the model does not have are hidden rather than shown dead — a Buds+
-has no ANC and no 360 Audio, so it gets an ambient-sound switch and nothing
-about spatial audio.
-
-It also picks the **Bluetooth codec** (the A2DP profiles PipeWire offers for
-that card), shows a bolt on whatever is charging, and — when two pairs are
-connected at once — controls the pair sound is actually going to, saying so
-when the pair on screen is not the audio output.
+- **Nothing to install.** Uses the system Python that Omarchy already ships. No
+  daemon, no systemd unit, no setup script, no GUI app running in the
+  background, no root.
+- **Honest battery.** A bud in the case reads **In case**, a bud that dropped
+  off the link reads **—**. It never draws a fake red 0%, and it never warns
+  about a battery that is simply not being reported.
+- **One notification, not one per monitor**, when a bud runs low.
 
 ![The bar icon, showing ANC is on](docs/bar.png)
+
+## Compatibility
+
+| Model | Model no. | Noise control | 360 Audio | Charging flags | Status |
+|---|---|---|---|---|---|
+| Galaxy Buds Pro (2021) | SM-R190 | off / ANC / ambient | firmware 2+ | — | protocol-derived |
+| Galaxy Buds2 Pro | SM-R510 | off / ANC / ambient | yes | yes | tested upstream |
+| Galaxy Buds3 Pro | SM-R630 | off / ANC / ambient | yes | yes | **verified on hardware** |
+| Galaxy Buds4 Pro | SM-R640 | off / ANC / ambient | yes | yes | protocol-derived, cross-checked with live captures |
+
+"Protocol-derived" means the byte layout comes from the protocol and from other
+open-source clients but no maintainer owns that pair yet. If you do, a
+[compatibility report](https://github.com/akafrmn/omarchy-galaxy-buds-pro/issues/new?template=compatibility.yml)
+takes two minutes and moves the row to verified.
+
+The rest of the family keeps working too (Buds, Buds+, Buds Live, Buds2, Buds
+FE, Buds Core, Buds3, Buds3 FE, Buds4). Controls a model does not have are
+hidden rather than shown dead.
+
+The model is detected from the Samsung device id the earbuds publish (so a
+renamed pair is still recognised), and from the Bluetooth name on the 2021 Buds
+Pro, which publishes no id and cannot be renamed.
 
 ## Requirements
 
 - Omarchy 4 (the Quickshell-based `omarchy-shell`)
 - A pair of Galaxy Buds. Not paired yet? Open the panel while disconnected,
   open the case, hold the touch sensors on both earbuds for about 7 seconds
-  until the light starts flickering, then hit **Search** — the panel finds
-  and pairs them for you.
-- The system Python at `/usr/bin/python3` with `dbus-python` and `PyGObject`
-  (`python-dbus` and `python-gobject` on Arch — both are already present on a
-  stock Omarchy install)
-- PipeWire with `pactl`, for the codec row only; without it every other feature
-  still works
-
-No other packages, no daemon to install, and nothing that asks for root:
-it runs entirely as your own user.
+  until the light starts flickering, then hit **Search**.
+- `/usr/bin/python3` with `python-dbus` and `python-gobject`. Both come with a
+  stock Omarchy install.
+- PipeWire with `pactl`, for the codec row only. Everything else works without it.
 
 ## Install
 
-Review the repository, then add the plugin:
+Review the repository, then:
 
 ```bash
-omarchy plugin add https://github.com/aislandener/galaxy-buds-control.git
+omarchy plugin add https://github.com/akafrmn/omarchy-galaxy-buds-pro.git --enable
 ```
 
-Accept the prompt to enable the plugin during installation.
-
-For an unattended install from a repository you already trust:
+The widget lands in the right section of the bar. Put it next to audio:
 
 ```bash
-omarchy plugin add https://github.com/aislandener/galaxy-buds-control.git --enable --yes
+omarchy bar move io.github.akafrmn.galaxy-buds-pro --before omarchy.audio
 ```
 
-The widget lands in the right bar section. Put it next to the audio panel with:
-
-```bash
-omarchy bar move aislandener.galaxy-buds --before omarchy.audio
-```
-
-Nothing else to configure — the model is detected from the Bluetooth device id
-or, on older models, from its name.
+Coming from `aislandener.galaxy-buds` or another Buds plugin? Remove it first.
+Only one program can hold the earbuds' control link at a time (see
+[How it works](#how-it-works)).
 
 ## Update
 
-Review and apply the next fast-forward update:
-
 ```bash
-omarchy plugin update aislandener.galaxy-buds
+omarchy plugin update io.github.akafrmn.galaxy-buds-pro
 ```
 
-Or update all Git-managed plugins:
+Omarchy shows the diff, fast-forwards, and rolls back if the new version fails
+validation.
+
+## Remove
 
 ```bash
-omarchy plugin update --all
+omarchy plugin remove io.github.akafrmn.galaxy-buds-pro
 ```
 
-## Uninstall
-
-```bash
-omarchy plugin remove aislandener.galaxy-buds
-```
-
-Removing the plugin stops its helper and leaves nothing behind: it writes no
-files of its own, and the earbuds keep whatever mode they were last set to.
+The plugin writes no files of its own, so nothing is left behind. The earbuds
+keep whatever mode they were last set to.
 
 ## Keybinds
 
 The plugin answers on its own IPC target, so a Hyprland bind can drive it
-without opening the popover:
+without opening the panel:
 
 ```
-bind = SUPER SHIFT, A, exec, omarchy-shell aislandener.galaxy-buds cycle
-bind = SUPER SHIFT, N, exec, omarchy-shell aislandener.galaxy-buds set anc
+bind = SUPER SHIFT, A, exec, omarchy-shell io.github.akafrmn.galaxy-buds-pro cycle
+bind = SUPER SHIFT, N, exec, omarchy-shell io.github.akafrmn.galaxy-buds-pro set anc
 ```
 
-`cycle`, `set <off|anc|ambient>`, `open`, `close`, `toggle` and `status` are
-available. Never call `bin/galaxy-buds` directly for this — see below.
+| Method | Does |
+|---|---|
+| `cycle` | Next noise mode the model supports |
+| `set <off\|anc\|ambient>` | Set a noise mode |
+| `codec <profile>` | Pin a PipeWire card profile |
+| `status` | Print the current state as JSON |
+| `open` / `close` / `toggle` | The panel |
+| `testLowBattery` | Fire the low battery check now |
+
+## Settings
+
+Set these on the widget's entry in `~/.config/omarchy/shell.json`:
+
+```json
+{ "id": "io.github.akafrmn.galaxy-buds-pro",
+  "lowBatteryWarning": true,
+  "lowBatteryThreshold": 15,
+  "labels": { "anc": "ANC", "inCase": "Im Etui" } }
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `lowBatteryWarning` | `true` | Notify when either earbud reaches the threshold |
+| `lowBatteryThreshold` | `15` | Percent, 1–50. Re-arms once the bud climbs 5% clear |
+| `labels` | `{}` | Replace any visible string (see below) |
+
+Earbuds that are charging, in the case or not connected are never counted
+toward the warning.
+
+### Labels
+
+Every key is optional. Anything you leave out keeps its English text.
+
+| Key | Default |
+|---|---|
+| `noiseControl` / `settings` / `codec` | Noise control / Settings / Codec |
+| `off` / `anc` / `ambient` / `adaptive` | Off / ANC / Ambient / Adaptive |
+| `spatial` / `touch` / `seamless` | 360 Audio / Touch controls / Quick connect |
+| `left` / `right` / `case` / `inCase` | L / R / Case / In case |
+| `notOutput` | Not the audio output |
+| `disconnected` | Disconnected. Take them out of the case to reconnect. |
+| `notPaired` | No Galaxy Buds paired. |
+| `serviceOff` | The plugin service is not running. |
+
+## Battery
+
+Each earbud reports a placement: worn, out of the ear, in the case, or gone
+from the link. A bud in the case, or one that has dropped off the link, sends a
+battery of `0`, which means "no reading" and not "empty". The panel shows:
+
+| Placement | Shows |
+|---|---|
+| worn / out of the ear | `64%`, red at 20% and below |
+| in the case, reporting a charge | `In case · 󰂄 64%` |
+| in the case, no reading | `In case` |
+| dropped off the link | `—` |
+
+A charging bud counts as "in the case" even when its placement says otherwise.
+Buds4 Pro reports a freshly docked bud as out of the ear for a moment. The case
+only reports its own charge while at least one bud sits in it, so that row
+comes and goes.
+
+## Codec
+
+The codec row comes from PipeWire, not from the earbuds, so it works the same
+on every model. **Auto** is PipeWire's generic A2DP profile: it negotiates the
+best codec both ends support, and the header shows what it picked
+(`Codec · AAC`). The other buttons pin a specific codec. AAC needs
+`libfdk-aac`.
+
+While something holds the microphone, PipeWire switches the card to a headset
+profile and the row offers the call codecs instead (LC3-SWB, mSBC, CVSD),
+marked with a mic glyph. PipeWire switches back when the mic is released.
+
+## Microphone troubleshooting
+
+The plugin does not touch audio routing, but the Pro line's mic trips people up
+on Linux. What it usually is:
+
+- **In A2DP the mic "does not exist."** WirePlumber exposes a placeholder
+  source (`bluez_input.XX:XX:…`, colons) that switches the card to the headset
+  profile when an app opens it. The real headset nodes use underscores
+  (`bluez_input.XX_XX_….0`). This is by design, not missing hardware.
+- **Expect about 1–1.5 s of silence** at the start of a recording that triggers
+  the switch. You may also see a transient `Failure in Bluetooth audio transport`
+  in the journal. It is normal as long as the node recovers.
+- **The default source fell back to the laptop mic**, or the card got stuck on
+  `headset-head-unit-cvsd` (8 kHz). Check
+  `~/.local/state/wireplumber/{default-nodes,default-profile,bluetooth-autoswitch}`,
+  fix the entry, then `systemctl --user restart wireplumber`. Buds2 Pro and
+  later should land on `headset-head-unit` (LC3-SWB or mSBC).
+- **Quiet ambient recordings are fine.** The earbuds gate noise hard. Test by
+  speaking.
+- **In-call audio barely audible?** The headset-profile route keeps its own
+  volume. Raise it once while on a call.
 
 ## What it does on your system
 
-Everything this plugin does, in full:
-
 - **Bluetooth**: registers an `org.bluez.Profile1` client on the system D-Bus
-  and opens one RFCOMM socket to the earbuds, to read their state and send the
-  commands the panel offers. It talks to no other device.
-- **Commands it runs**: `/usr/bin/python3` (its own helper, from this
-  repository) and `pactl` (to list cards and sinks, and to set a card profile
-  when you pick a codec).
-- **Privileges**: none beyond your own user. It never elevates.
-- **Files**: none. It writes nothing and reads nothing outside its own
-  repository.
+  and opens one RFCOMM socket to the earbuds. It talks to no other device.
+- **Commands**: `/usr/bin/python3` (its own helper), `pactl` (list cards and
+  sinks, set a card profile when you pick a codec), `omarchy-bluetooth-device`
+  (only when you pair from the panel), and `omarchy-notification-send` (low
+  battery).
+- **Privileges**: your own user. It never elevates.
+- **Files**: none written. Nothing is read outside its own folder.
 - **Network**: none.
 - **Background**: one helper process, started and stopped with the shell.
-- **IPC**: registers the `aislandener.galaxy-buds` shell IPC target with
-  `open`, `close`, `toggle`, `cycle`, `set <mode>`, `codec <profile>` and
-  `status`. Keybindings are yours to define; the plugin adds none.
-- **User configuration**: none required. Optional label overrides live in your
-  own `shell.json` entry, and the plugin never writes to it.
+- **IPC**: the `io.github.akafrmn.galaxy-buds-pro` shell target. The plugin adds
+  no keybindings of its own.
 
 ## Security
 
-This plugin runs unsandboxed inside `omarchy-shell` when enabled. Review its
-source and the behavior documented above before installing it.
+Omarchy plugins run unsandboxed inside `omarchy-shell`. Review the source and
+the list above before installing. Report vulnerabilities privately as described
+in [SECURITY.md](SECURITY.md).
 
 ## How it works
 
 `bin/galaxy-buds` speaks Samsung's SPP protocol over an RFCOMM socket that
-BlueZ hands over through the Profile1 API — the same path GalaxyBudsClient
-takes on Linux. It prints the earbud state as JSON lines and takes commands as
-JSON lines on stdin.
+BlueZ hands over through the Profile1 API, the same path GalaxyBudsClient takes
+on Linux. It prints the earbud state as JSON lines and reads commands as JSON
+lines on stdin.
 
-The plugin runs it from `Service.qml`, which the shell mounts once per session,
-and every bar reads that one object. Bar widgets are mounted once per monitor,
-so owning the process in the widget would start one helper per screen.
+`Service.qml` runs that helper once per session. Bar widgets are mounted once
+per monitor, so each monitor's widget reads from the one service rather than
+starting its own helper.
 
-**Only one program can hold that connection.** Opening the GalaxyBudsClient GUI
-while the widget is running will take the link away from one of the two, and
-running a second copy of the helper by hand does the same. Drive the plugin
-through its IPC target instead.
+**Only one program can hold that link.** GalaxyBudsClient, another Buds plugin,
+or a second copy of the helper will take it away from this one. Drive the
+plugin through its IPC target instead.
 
-Uses the system Python (`/usr/bin/python3`) for `dbus-python` and `PyGObject`.
-No extra packages, no daemon to install, no root.
+What differs per model lives in the `PROFILES` table in `bin/galaxy-buds`: the
+service UUID, the noise command, where each field sits in the status message,
+and which firmware revision started reporting it. Adding a model is a row and a
+test. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Translating the labels
+## FAQ
 
-Every visible string is English by default and can be replaced from this
-widget's entry in `~/.config/omarchy/shell.json`:
+**Is it on the AUR?** No, on purpose. Omarchy loads third-party plugins only
+from `~/.config/omarchy/plugins`, AUR packages must not write into home
+directories, and the plugin validator rejects symlinks. A package could only
+ship a "copy me in" script, which would then fight `omarchy plugin update`.
+`omarchy plugin add` is the supported distribution channel.
 
-```json
-{
-  "id": "aislandener.galaxy-buds",
-  "labels": {
-    "noiseControl": "Controle de ruído",
-    "settings": "Ajustes",
-    "off": "Desligado",
-    "ambient": "Som ambiente",
-    "spatial": "Áudio 360",
-    "touch": "Controles de toque",
-    "seamless": "Conexão rápida",
-    "case": "Estojo",
-    "searchHint": "1. Abra o estojo\n2. Segure os sensores de toque dos dois fones por uns 7 segundos, até a luz começar a piscar\n3. Toque em Buscar",
-    "search": "Buscar"
-  }
-}
-```
+**Equalizer?** Not yet. Buds4 Pro acks EQ presets (message `0x86`, seen in
+hmarquez-solutions/omarchy-buds), but no preset UI ships here until it is
+confirmed on each Pro model. `tools/eq-probe.py` asks your pair directly. Post
+what it prints in an issue.
 
-Every key is optional; anything you leave out keeps its English text.
-
-| Key | Default |
-|---|---|
-| `noiseControl` | Noise control |
-| `settings` | Settings |
-| `off` / `anc` / `ambient` / `adaptive` | Off / ANC / Ambient / Adaptive |
-| `codec` | Codec |
-| `spatial` | 360 Audio |
-| `touch` | Touch controls |
-| `seamless` | Quick connect |
-| `left` / `right` / `case` | L / R / Case |
-| `notOutput` | Not the audio output |
-| `serviceOff` | The plugin service is not running. |
-| `searchHint` | 1. Open the case. 2. Hold the touch sensors on both earbuds for about 7 seconds, until the light starts flickering. 3. Tap Search. |
-| `search` | Search |
-| `searching` | Searching for Galaxy Buds… |
-| `found` | Found |
-| `pair` | Pair |
-| `connectingDevice` | Connecting… |
-
-## Models
-
-| Model | Noise control | 360 Audio | Touch | Quick connect | Charging |
-|---|---|---|---|---|---|
-| Buds (original) | ambient on/off | — | yes | — | — |
-| Buds+ | ambient on/off | — | yes | firmware 11+ | — |
-| Buds Live | ANC on/off | firmware 9+ | yes | yes | — |
-| Buds Pro | off / ANC / ambient | firmware 2+ | yes | yes | — |
-| Buds2, Buds2 Pro, Buds FE, Buds Core | off / ANC / ambient | most | yes | yes | yes |
-| Buds3, Buds3 Pro, Buds3 FE | off / ANC / ambient | most | yes | yes | yes |
-
-Battery is reported by every model; the case only reports its own charge while
-the earbuds are sitting in it, so that bar comes and goes. Which earbud is
-charging is only reported from Buds2 on — on older models that byte means
-something else, so no bolt is shown rather than a guessed one.
-
-### Codec
-
-The codec row comes from PipeWire, not from the earbuds, so it works the same
-on every model. If you already run the `bt.codecs` plugin, this replaces it.
-
-**Auto** is PipeWire's generic A2DP profile: it negotiates the best codec both
-ends support, which is usually what you want. Because the profile name says
-nothing about what it picked, the section header shows the codec actually in
-use — `Codec · AAC` — read from the sink rather than the profile. The other
-buttons pin a specific codec instead.
-
-A codec only appears when both the earbuds and PipeWire offer it. AAC needs
-`libfdk-aac` installed; a pair that never negotiates AAC will not list it.
-
-**While something holds the microphone** — a call in Discord, say — PipeWire
-switches the card to a headset profile, where the music codecs are not choices
-at all. The row follows that: it offers the call codecs (mSBC, CVSD) and the
-header marks the mode with a mic glyph, so the music codecs going away reads as
-"you are on a call" rather than "they disappeared". PipeWire switches back on
-its own when the microphone is released.
-
-Tested on **Galaxy Buds2 Pro** and **Galaxy Buds+**. The rest come from the
-protocol layout and have not been exercised on real hardware.
-
-What differs per model lives in the `PROFILES` table in `bin/galaxy-buds`:
-which service UUID to connect on (each generation uses a different one), which
-command changes the noise mode, where each field sits in the status message,
-and which firmware revision started reporting it. Adding a model is a row.
-
-A model the table does not know still gets noise control and battery — those
-bytes have not moved since Buds Live — and hides 360 Audio rather than reading
-a byte that means something else on that firmware.
-
-## Validate from source
+## Development
 
 ```bash
-omarchy plugin validate .
+git clone https://github.com/akafrmn/omarchy-galaxy-buds-pro.git
+cd omarchy-galaxy-buds-pro
+make check        # tests + manifest checks + lint
 ```
 
-## Tests
+The dev loop, the protocol notes and how to add a model are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-```bash
-/usr/bin/python3 tests/test_protocol.py
-```
+## Credits
 
-Framing, CRC, per-model status parsing, command encoding, codec discovery and
-device selection — all without earbuds.
+Inspired by and based on the work of **Aislan Dener Souza Vicentini** and
+[aislandener/galaxy-buds-control](https://github.com/aislandener/galaxy-buds-control).
+The protocol engine, framing, model table and panel are his. This repository
+keeps his full commit history. See [CONTRIBUTORS.md](CONTRIBUTORS.md) for
+everyone involved.
+
+Protocol knowledge comes from
+[GalaxyBudsClient](https://github.com/timschneeb/GalaxyBudsClient) by Tim
+Schneeberger (read for reference, no code copied) and from the Buds4 Pro
+captures in
+[hmarquez-solutions/omarchy-buds](https://github.com/hmarquez-solutions/omarchy-buds).
+
+Not affiliated with or endorsed by Samsung. "Galaxy Buds" is a trademark of
+Samsung Electronics.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Copyright Aislan Dener Souza Vicentini and Oleksii Lysenko.
