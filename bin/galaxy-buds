@@ -747,6 +747,10 @@ class Daemon:
             request = json.loads(line)
         except ValueError:
             return
+        # An exception here would escape the stdin watch and GLib would drop
+        # it, silently ending every later command.
+        if not isinstance(request, dict):
+            return
         name = request.get("cmd")
         value = request.get("value")
         modes = self.state.get("modes") or list(UNKNOWN_PROFILE["modes"])

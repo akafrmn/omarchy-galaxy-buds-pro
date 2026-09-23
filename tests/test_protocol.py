@@ -518,6 +518,15 @@ def test_a_charging_bud_is_in_the_case_whatever_its_nibble_says():
     assert state["placement"] == {"left": "wearing", "right": "case"}
     assert state["charging"]["right"] is True
 
+
+def test_commands_that_are_not_json_objects_are_ignored():
+    daemon = gb.Daemon()
+    sent = []
+    daemon.send = lambda msg_id, payload=b"": sent.append(msg_id)
+    for line in ("", "x", "{", "[]", "null", '"cycle"', "42", '{"cmd": 1}'):
+        daemon.command(line)
+    assert sent == []
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):
