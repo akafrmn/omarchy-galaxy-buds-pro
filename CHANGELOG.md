@@ -16,6 +16,13 @@ All notable changes to this project are documented here. The format follows
   Nothing else is sent during a transfer; connection loss, 30 s of silence or Cancel abort it and the
   earbuds keep their firmware. Success is reported only once they return on the new build.
 
+- Firmware status under the version: `✓ Latest version · checked hh:mm`, `Checking…` or
+  `Couldn't check for updates`, so "no notice" never has to mean "up to date". A failed check is
+  retried at the next connect or hourly tick instead of after 12 hours.
+- Live install progress: Download / Send / Install / Restart steps, a smoothly animated bar with
+  percent, MB sent and time left, and a sliding bar where the earbuds report no percentage.
+  The download itself now reports progress.
+
 ### Changed
 - The update notice no longer says to use Galaxy Wearable; `firmwareHow` label removed.
 

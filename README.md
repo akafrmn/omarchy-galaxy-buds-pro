@@ -156,6 +156,9 @@ Every key is optional. Anything you leave out keeps its English text.
 | `fwInstall` / `fwInstallNow` / `fwNotNow` / `fwCancel` / `fwDismiss` | Install / Install now / Not now / Cancel / OK |
 | `fwConfirm` | The confirmation text before an install |
 | `fwDownloading` … `fwRefused` | The install stages (see `installText()` in `Panel.qml`) |
+| `fwStepDownload` / `fwStepSend` / `fwStepInstall` / `fwStepRestart` | Download / Send / Install / Restart |
+| `fwLatest` / `fwChecked` / `fwChecking` / `fwUnknown` | Latest version / checked / Checking… / Couldn't check for updates |
+| `fwOf` / `fwAbout` / `fwLeft` | of / about / left (as in `2.7 of 8.3 MB · about 20 s left`) |
 | `firmwareMismatch` | Left and right run different firmware; updates can fail until they match. |
 
 ## Battery
@@ -205,15 +208,17 @@ The earbuds report their build when they connect, and the panel shows it:
 year (`Z` = 2026), month (`D` = April) and revision (`2`).
 
 With `firmwareCheck` on (the default), the plugin looks up the newest build for
-your model and, when there is one, adds
-`Update available: R630XXU0AZG2 (Jul 2026).` and an **Install** button.
+your model and says so under the version: `✓ Latest version · checked 02:29`,
+`Checking…`, or `Couldn't check for updates`. When there is a newer build it
+shows `Update available: R630XXU0AZG2 (Jul 2026).` and an **Install** button.
 
 - **Where it looks:** the public build list at `fw.timschneeberger.me`, which
   the GalaxyBudsClient author keeps in sync with Samsung's servers.
 - **What it sends:** one HTTPS request with only the model name (for example
   `Buds3Pro`), when the earbuds connect and then at most every 12 hours. TLS is
   verified. Nothing about you or your earbuds is sent.
-- **If it fails** (offline, server down), nothing is shown and nothing breaks.
+- **If it fails** (offline, server down), it says `Couldn't check for updates`,
+  nothing else breaks, and it tries again at the next connect or within the hour.
 - **Turn it off** with `"firmwareCheck": false`. The installed build is still
   shown, and no request is ever made.
 - **Different builds on the two buds** get a warning: Samsung's updater tends
@@ -224,8 +229,11 @@ your model and, when there is one, adds
 Click **Install**, read the confirmation, and click **Install now**. No phone
 and no Galaxy Wearable needed. On a Buds3 Pro the whole update took about
 3 minutes: download, transfer, then the earbuds restart and come back on the
-new build. The panel shows each stage and can be closed; the install carries
-on.
+new build. The panel ticks off each step (Download, Send, Install, Restart)
+with a live bar, MB sent and time left; where the earbuds report no
+percentage, the bar slides. The panel can be closed; the install carries on.
+
+![Installing an update: steps, live bar, MB sent and time left](docs/firmware-install.png)
 
 Before anything is sent, the plugin refuses unless all of this holds. The
 helper checks it, not just the button:

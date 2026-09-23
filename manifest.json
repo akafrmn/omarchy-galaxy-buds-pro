@@ -44,7 +44,7 @@
         "key": "labels",
         "type": "object",
         "label": "Label overrides",
-        "description": "Replace any visible string, e.g. {\"anc\": \"ANC\", \"ambient\": \"Som ambiente\"}. Keys: noiseControl, settings, codec, off, anc, ambient, adaptive, spatial, touch, seamless, left, right, case, inCase, ancOneBud, firmware, firmwareUpdate, firmwareMismatch, fwInstall, fwInstallNow, fwNotNow, fwCancel, fwDismiss, fwConfirm, fwDownloading, fwOpening, fwWaiting, fwTransferring, fwInstalling, fwRebooting, fwDone, fwFailed, fwRefused, notOutput, serviceOff, searchHint, searching, found, connectingDevice, search, pair.",
+        "description": "Replace any visible string, e.g. {\"anc\": \"ANC\", \"ambient\": \"Som ambiente\"}. Keys: noiseControl, settings, codec, off, anc, ambient, adaptive, spatial, touch, seamless, left, right, case, inCase, ancOneBud, firmware, firmwareUpdate, firmwareMismatch, fwInstall, fwInstallNow, fwNotNow, fwCancel, fwDismiss, fwConfirm, fwDownloading, fwOpening, fwWaiting, fwTransferring, fwInstalling, fwRebooting, fwDone, fwFailed, fwRefused, fwStepDownload, fwStepSend, fwStepInstall, fwStepRestart, fwLatest, fwChecked, fwChecking, fwUnknown, fwOf, fwAbout, fwLeft, notOutput, serviceOff, searchHint, searching, found, connectingDevice, search, pair.",
         "defaultValue": {}
       },
       {
