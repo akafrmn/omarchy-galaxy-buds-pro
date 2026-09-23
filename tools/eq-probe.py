@@ -19,6 +19,7 @@ The plugin's own helper holds the single SPP link, so stop it first:
 Usage: eq-probe.py [--address AA:BB:CC:DD:EE:FF] [--msg 134] [--presets 0,1,2,3,4,5]
 """
 
+import importlib.machinery
 import importlib.util
 import os
 import sys
@@ -39,7 +40,7 @@ buds = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(buds)
 
 MSG_EQUALIZER = 134          # 0x86, per GalaxyBudsClient MsgIds
-PROFILE_PATH = "/omarchy/galaxybuds-eqprobe"
+PROFILE_PATH = "/omarchy/galaxybuds_eqprobe"
 
 
 def arg(name, fallback):
