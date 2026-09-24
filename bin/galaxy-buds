@@ -49,20 +49,6 @@ MSG_SET_NOISE_REDUCTION = 152
 MSG_NOISE_REDUCTION_MODE_UPDATE = 155
 MSG_SET_SEAMLESS_CONNECTION = 175
 MSG_VERSION_INFO_LONG = 104
-MSG_FIND_START = 160
-MSG_FIND_STOP = 161
-
-# Blade lights (Buds3 Pro only; Buds3 has none, Buds4 Pro dropped them). No
-# client documents a lighting command, so the modes are built from Find My
-# Earbuds, measured on a Buds3 Pro with a webcam and a microphone: the blade
-# lights come on the moment a find starts, while its beep only ramps in after
-# about 3 s. Sessions shorter than that light the blades without a sound.
-# Each mode is (ms with the lights on, ms off); add a mode by adding a row.
-LIGHT_MODES = {
-    "steady": (2000, 150),     # restarted before the beep can ramp in
-    "flicker": (400, 400),
-}
-LIGHT_TIMEOUT = 10 * 60        # seconds; nobody means "forever"
 MSG_FOTA_RESULT = 185
 MSG_FOTA_OPEN = 187
 MSG_FOTA_CONTROL = 188
@@ -133,7 +119,7 @@ PROFILES = [
      "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 
     {"name": "buds3pro", "charging": True, "ids": (340, 341), "match": ("Buds3 Pro",),
-     "uuid": SPP_NEW, "fw_model": "Buds3Pro", "lights": True,
+     "uuid": SPP_NEW, "fw_model": "Buds3Pro",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
      "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
 
@@ -170,7 +156,7 @@ UNKNOWN_PROFILE = {"name": "unknown", "ids": (), "match": (), "uuid": SPP_NEW, "
 
 DEFAULTS = {"legacy_frame": False, "wearing": "nibbles", "case_battery": True,
             "charging": False, "noise_ack_receipt": False, "one_bud_noise": None,
-            "fw_model": None, "lights": False}
+            "fw_model": None}
 
 
 def profile_get(profile, key):
@@ -783,9 +769,6 @@ class Daemon:
         self.flash = None
         self.fetch_image = fetch_firmware_image
         self.clock = time.monotonic
-        # Blade light mode in progress: {"mode", "until", "on", "token"} or None.
-        self.lights = None
-        self.timeout_ms = lambda ms, job: job   # replaced by GLib in run()
 
     # ---- output ----------------------------------------------------------
     def emit(self):
@@ -850,8 +833,6 @@ class Daemon:
         self.device_path = path
         self.state["model"] = profile["name"]
         self.state["modes"] = list(profile["modes"])
-        if "lights" not in self.state:
-            self.lights_state("off")
         self.state["name"] = name
         self.state["address"] = str(device.get("Address", "")).upper()
 
@@ -933,7 +914,6 @@ class Daemon:
         self.connecting = False
         self.update({"connected": False, "reason": "disconnected"})
         self.flash_on_disconnect()
-        self.stop_lights(reason="")
 
     def on_readable(self, fd, condition):
         from gi.repository import GLib
@@ -981,64 +961,6 @@ class Daemon:
             # A short payload means this firmware lays the message out
             # differently; keep the link rather than dying on one message.
             pass
-
-    # ---- blade lights ----------------------------------------------------
-    def lights_state(self, mode="off", hint=""):
-        if not profile_get(self.profile, "lights"):
-            self.state.pop("lights", None)
-            return
-        self.state["lights"] = {"mode": mode, "modes": ["off"] + list(LIGHT_MODES), "hint": hint}
-
-    def lights_blocker(self):
-        placement = self.state.get("placement") or {}
-        if not self.socket or not self.state.get("connected"):
-            return "The earbuds are not connected."
-        if self.flash:
-            return "Not during a firmware install."
-        if "wearing" in (placement.get("left"), placement.get("right")):
-            return "Take the earbuds out of your ears first."
-        if "case" in (placement.get("left"), placement.get("right")):
-            return "Take both earbuds out of the case."
-        return ""
-
-    def set_lights(self, mode):
-        if not profile_get(self.profile, "lights"):
-            return
-        if mode not in LIGHT_MODES:
-            self.stop_lights()
-            return
-        blocker = self.lights_blocker()
-        if blocker:
-            self.stop_lights(reason=blocker)
-            return
-        token = object()          # a newer mode cancels the older timers
-        self.lights = {"mode": mode, "until": self.clock() + LIGHT_TIMEOUT, "on": False, "token": token}
-        self.lights_state(mode)
-        self.emit()
-        self.lights_tick(token)
-
-    def lights_tick(self, token):
-        lights = self.lights
-        if not lights or lights["token"] is not token:
-            return False
-        blocker = self.lights_blocker()
-        if blocker or self.clock() > lights["until"]:
-            self.stop_lights(reason=blocker or "Turned off after 10 minutes.")
-            return False
-        on_ms, off_ms = LIGHT_MODES[lights["mode"]]
-        lights["on"] = not lights["on"]
-        self.send(MSG_FIND_START if lights["on"] else MSG_FIND_STOP)
-        self.timeout_ms(on_ms if lights["on"] else off_ms, lambda: self.lights_tick(token))
-        return False
-
-    def stop_lights(self, reason=""):
-        was_on = self.lights and self.lights["on"]
-        self.lights = None
-        if was_on:
-            self.send(MSG_FIND_STOP)
-        if profile_get(self.profile, "lights"):
-            self.lights_state("off", reason)
-            self.emit()
 
     def handle_version(self, builds):
         if not builds:
@@ -1132,7 +1054,6 @@ class Daemon:
     def install_firmware(self, target):
         if self.flash:
             return
-        self.stop_lights()     # the light modes drive Find My Earbuds; not mid-install
         reasons = flash_preflight(self.state, self.profile, target)
         if reasons:
             self.update({"firmware_install": {"stage": "refused", "target": target, "reasons": reasons}})
@@ -1360,9 +1281,6 @@ class Daemon:
         if name == "firmware_cancel":
             self.cancel_firmware()
             return
-        if name == "lights":
-            self.set_lights(value if isinstance(value, str) else "off")
-            return
         if name == "firmware_dismiss":
             if not self.flash and self.state.pop("firmware_install", None):
                 self.emit()
@@ -1485,7 +1403,6 @@ class Daemon:
         self.defer = lambda job: GLib.idle_add(job)
         GLib.timeout_add_seconds(3600, self.check_firmware)
         GLib.timeout_add_seconds(2, self.flash_watchdog)
-        self.timeout_ms = lambda ms, job: GLib.timeout_add(ms, job)
         GLib.timeout_add_seconds(5, self.register_profile)
         self.connect()
         self.refresh_audio()
