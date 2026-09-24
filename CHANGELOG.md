@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.3.2] - 2026-09-24
+
+### Changed
+- README leads with firmware updates, with a three-step image (update found, installing, up to date)
+  near the top, and gains a Roadmap: Buds3 Pro blade light control, firmware installs confirmed on
+  every Pro model, equalizer presets.
+- Manifest description mentions firmware updates first.
+
 ## [2.3.1] - 2026-09-24
 
 ### Fixed
@@ -108,6 +116,7 @@ First release as `io.github.akafrmn.galaxy-buds-pro`, based on
 - Plugin id is now `io.github.akafrmn.galaxy-buds-pro`. Remove `aislandener.galaxy-buds` before
   installing: only one program can hold the earbuds' control link.
 
+[2.3.2]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.3.2
 [2.3.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.3.1
 [2.3.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.3.0
 [2.2.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.2.0

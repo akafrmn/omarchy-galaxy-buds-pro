@@ -5,14 +5,20 @@
 [![Omarchy 4](https://img.shields.io/badge/Omarchy-4-black.svg)](https://omarchy.org/manual/shell-plugins/)
 
 Samsung **Galaxy Buds Pro, Buds2 Pro, Buds3 Pro and Buds4 Pro** in the Omarchy
-bar: noise control, per-earbud and case battery, low battery warnings, the
-Bluetooth codec, 360 Audio, touch controls and quick connect.
+bar, including **firmware updates straight from your desktop — no phone, no
+Galaxy Wearable**. Plus noise control, per-earbud and case battery, low battery
+warnings, the Bluetooth codec, 360 Audio, touch controls and quick connect.
 
 ![The panel on a Galaxy Buds3 Pro: battery, noise control, settings, codec, and the installed firmware confirmed as the latest (sound was going to the laptop speakers, hence "Not the audio output")](preview.png)
 
 The icon follows the earbuds, not the other way around: change the mode by
 touching an earbud or from your phone and the bar updates immediately.
 
+- **Firmware updates without a phone.** See the build each bud runs, get told
+  when Samsung releases a newer one, and install it from the panel with live
+  progress. Upgrade-only, with the image verified before a byte is sent.
+  Tested on real hardware: a Buds3 Pro went from R630XXU0AZD2 to R630XXU0AZG2
+  in about 3 minutes. [How it works](#firmware).
 - **Nothing to install.** Uses the system Python that Omarchy already ships. No
   daemon, no systemd unit, no setup script, no GUI app running in the
   background, no root.
@@ -20,11 +26,12 @@ touching an earbud or from your phone and the bar updates immediately.
   off the link reads **—**. It never draws a fake red 0%, and it never warns
   about a battery that is simply not being reported.
 - **One notification, not one per monitor**, when a bud runs low.
-- **Firmware updates without a phone.** Shows the build each bud runs, says
-  when Samsung has released a newer one, and installs it from the panel with
-  upgrade-only safety checks.
+
+![Firmware updates in three steps: update found with an Install button, installing with live progress, then up to date](docs/firmware.png)
 
 ![The bar icon among the other Omarchy indicators](docs/bar.png)
+
+Coming next: [blade light control for Buds3 Pro](#roadmap).
 
 ## Compatibility
 
@@ -235,7 +242,8 @@ new build. The panel ticks off each step (Download, Send, Install, Restart)
 with a live bar, MB sent and time left; where the earbuds report no
 percentage, the bar slides. The panel can be closed; the install carries on.
 
-![Installing an update: steps, live bar, MB sent and time left](docs/firmware-install.png)
+The three stages, as shown at the [top](#galaxy-buds-pro-for-omarchy):
+update found, installing (steps, live bar, MB sent and time left), up to date.
 
 Before anything is sent, the plugin refuses unless all of this holds. The
 helper checks it, not just the button:
@@ -328,6 +336,22 @@ What differs per model lives in the `PROFILES` table in `bin/galaxy-buds`: the
 service UUID, the noise command, where each field sits in the status message,
 and which firmware revision started reporting it. Adding a model is a row and a
 test. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Roadmap
+
+- **Blade light control (Buds3 Pro).** Buttons in the panel for the stem
+  lights: always on, flicker, and the styles Galaxy Wearable offers (blinking,
+  fade in and out, steady). The research is done and written up in
+  [CONTRIBUTING.md](CONTRIBUTING.md#open-problem-buds3-pro-blade-lights):
+  the lights can already be driven through Find My Earbuds, but that also
+  plays its chirps, so it is not shipped. The missing piece is the command
+  Galaxy Wearable itself sends. **Help wanted:** an Android Bluetooth HCI snoop
+  log taken while changing *Earbud lights controls* in Galaxy Wearable would
+  unlock it. Open an issue if you can capture one.
+- **Firmware installs confirmed on every Pro model.** Verified on Buds3 Pro;
+  Buds Pro, Buds2 Pro and Buds4 Pro use the same transfer. A report from an
+  owner moves each to verified.
+- **Equalizer presets**, once `tools/eq-probe.py` confirms them per model.
 
 ## FAQ
 
