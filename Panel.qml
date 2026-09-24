@@ -302,6 +302,20 @@ Panel {
   function setToggle(name, value) { if (service) service.setToggle(name, value) }
   function setCodec(profile) { if (service) service.setCodec(profile) }
 
+  // ---- blade lights (Buds3 Pro) -----------------------------------------
+  readonly property var lights: buds.lights || null
+  // Modes come from the helper, so a new one there shows up here with its id
+  // until it gets a label.
+  readonly property var lightOptions: {
+    var names = {off: t("lightsOff", "Off"), steady: t("lightsSteady", "Always on"),
+                 flicker: t("lightsFlicker", "Flicker")}
+    var modes = lights ? (lights.modes || ["off"]) : ["off"]
+    var out = []
+    for (var i = 0; i < modes.length; i++)
+      out.push({value: modes[i], label: names[modes[i]] || modes[i]})
+    return out
+  }
+
   // ---- firmware installation --------------------------------------------
   readonly property var install: buds.firmware_install || null
   readonly property string installStage: install ? String(install.stage || "") : ""
@@ -680,6 +694,35 @@ Panel {
               onToggled: root.setToggle(modelData.key, !modelData.checked)
             }
           }
+        }
+
+        // ---------- Blade lights: Buds3 Pro only (the helper omits the key elsewhere) ----------
+        PanelSectionHeader {
+          width: parent.width
+          text: root.t("lights", "Blade lights")
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          visible: root.connected && root.lights !== null
+        }
+
+        ButtonGroup {
+          width: parent.width
+          options: root.lightOptions
+          value: root.lights ? String(root.lights.mode || "off") : "off"
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          visible: root.connected && root.lights !== null
+          onChanged: function(value) { if (root.service) root.service.setLights(value) }
+        }
+
+        Text {
+          width: parent.width
+          visible: root.connected && root.lights !== null && String(root.lights.hint || "") !== ""
+          text: root.lights ? String(root.lights.hint || "") : ""
+          color: root.dim
+          wrapMode: Text.WordWrap
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
         }
 
         PanelSectionHeader {

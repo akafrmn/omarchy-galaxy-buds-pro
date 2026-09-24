@@ -1016,6 +1016,122 @@ def test_a_late_install_result_is_acknowledged():
     daemon.handle(gb.MSG_FOTA_CONTROL, bytes([0, 100, 0]))
     assert len(daemon.socket.frames) == 1
 
+
+# ---- blade lights (Buds3 Pro) -----------------------------------------------
+
+def lights_daemon(name="buds3pro"):
+    daemon = gb.Daemon()
+    daemon.profile = profile(name)
+    daemon.emit = lambda: None
+    daemon.socket = FakeSocket()
+    daemon.state.update({"connected": True, "placement": {"left": "idle", "right": "idle"}})
+    daemon.lights_state("off")
+    timers = []
+    daemon.timeout_ms = lambda ms, job: timers.append((ms, job))
+    now = [0.0]
+    daemon.clock = lambda: now[0]
+    return daemon, timers, now
+
+
+def run_timers(timers, steps):
+    """Fire the pending timer `steps` times; return the delays used."""
+    delays = []
+    for _ in range(steps):
+        ms, job = timers.pop(0)
+        delays.append(ms)
+        job()
+    return delays
+
+
+def find_ids(daemon):
+    return [mid for mid, _, _ in sent(daemon.socket)]
+
+
+def test_only_buds3_pro_has_blade_lights():
+    assert profile("buds3pro")["lights"] is True
+    for name in ("buds3", "buds4pro", "buds2pro", "budspro"):
+        daemon, _, _ = lights_daemon(name)
+        assert "lights" not in daemon.state, name
+        daemon.command('{"cmd":"lights","value":"steady"}')
+        assert daemon.socket.frames == [], name
+
+
+def test_steady_restarts_find_before_the_beep_ramps_in():
+    daemon, timers, _ = lights_daemon()
+    daemon.command('{"cmd":"lights","value":"steady"}')
+    delays = run_timers(timers, 5)
+    assert find_ids(daemon) == [gb.MSG_FIND_START, gb.MSG_FIND_STOP] * 3
+    assert delays == [2000, 150, 2000, 150, 2000]
+    assert max(gb.LIGHT_MODES["steady"][0], gb.LIGHT_MODES["flicker"][0]) < 3000   # beep ramps in at ~3 s
+    assert daemon.state["lights"]["mode"] == "steady"
+
+
+def test_flicker_alternates_and_off_stops_with_find_stop():
+    daemon, timers, _ = lights_daemon()
+    daemon.command('{"cmd":"lights","value":"flicker"}')
+    assert run_timers(timers, 3) == [400, 400, 400]
+    daemon.command('{"cmd":"lights","value":"off"}')
+    assert find_ids(daemon)[-1] == gb.MSG_FIND_STOP
+    assert daemon.state["lights"]["mode"] == "off"
+    frames = len(daemon.socket.frames)
+    run_timers(timers, len(timers))            # stale timers from the old mode do nothing
+    assert len(daemon.socket.frames) == frames
+
+
+def test_switching_modes_cancels_the_old_schedule():
+    daemon, timers, _ = lights_daemon()
+    daemon.command('{"cmd":"lights","value":"steady"}')
+    daemon.command('{"cmd":"lights","value":"flicker"}')
+    stale, fresh = timers[0], timers[1]
+    before = len(daemon.socket.frames)
+    stale[1]()
+    assert len(daemon.socket.frames) == before
+    assert fresh[0] == 400
+
+
+def test_lights_refuse_when_worn_or_in_the_case_and_stop_if_put_in_an_ear():
+    for where in ("wearing", "case"):
+        daemon, _, _ = lights_daemon()
+        daemon.state["placement"]["right"] = where
+        daemon.command('{"cmd":"lights","value":"steady"}')
+        assert daemon.socket.frames == []
+        assert daemon.state["lights"]["mode"] == "off" and daemon.state["lights"]["hint"]
+    daemon, timers, _ = lights_daemon()
+    daemon.command('{"cmd":"lights","value":"steady"}')
+    daemon.state["placement"]["left"] = "wearing"
+    run_timers(timers, 1)
+    assert find_ids(daemon)[-1] == gb.MSG_FIND_STOP
+    assert daemon.state["lights"]["mode"] == "off"
+    assert "ears" in daemon.state["lights"]["hint"]
+
+
+def test_lights_turn_off_after_the_timeout():
+    daemon, timers, now = lights_daemon()
+    daemon.command('{"cmd":"lights","value":"flicker"}')
+    now[0] = gb.LIGHT_TIMEOUT + 1
+    run_timers(timers, 1)
+    assert daemon.state["lights"]["mode"] == "off"
+    assert "10 minutes" in daemon.state["lights"]["hint"]
+    assert timers == []
+
+
+def test_disconnect_and_firmware_install_stop_the_lights():
+    daemon, timers, _ = lights_daemon()
+    daemon.command('{"cmd":"lights","value":"steady"}')
+    daemon.disconnect()
+    assert daemon.lights is None and daemon.state["lights"]["mode"] == "off"
+
+    daemon = ready_to_flash()
+    daemon.timeout_ms = lambda ms, job: None
+    daemon.state["placement"] = {"left": "idle", "right": "idle"}
+    daemon.lights_state("off")
+    daemon.command('{"cmd":"lights","value":"steady"}')
+    assert daemon.lights is not None
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    assert daemon.lights is None
+    daemon.command('{"cmd":"lights","value":"steady"}')      # refused mid-install
+    assert daemon.lights is None and "firmware" in daemon.state["lights"]["hint"]
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):

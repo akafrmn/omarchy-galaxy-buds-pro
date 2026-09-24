@@ -30,6 +30,8 @@ QtObject {
   function installFirmware(build) { send({"cmd": "firmware_install", "value": String(build || "")}) }
   function cancelFirmware() { send({"cmd": "firmware_cancel"}) }
   function dismissFirmware() { send({"cmd": "firmware_dismiss"}) }
+  // Blade lights (Buds3 Pro): "off", "steady", "flicker"; the helper checks the rest.
+  function setLights(mode) { send({"cmd": "lights", "value": String(mode || "off")}) }
 
   // Firmware update check. Starts off and follows the widget's setting (on by
   // default), so a user who turned it off never makes a single request.
@@ -171,5 +173,7 @@ QtObject {
     function firmwareInstall(build: string): void { root.installFirmware(build) }
     function firmwareCancel(): void { root.cancelFirmware() }
     function firmwareDismiss(): void { root.dismissFirmware() }
+    // Buds3 Pro blade lights: lights off | steady | flicker
+    function lights(mode: string): void { root.setLights(mode) }
   }
 }
