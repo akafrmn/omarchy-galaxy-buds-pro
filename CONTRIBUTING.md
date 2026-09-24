@@ -69,6 +69,26 @@ no downgrades, ever; any change needs the simulated-earbud test in
 `tests/test_protocol.py` to still pass byte-exact, plus a new test for the case
 you changed; and say in the pull request which model you flashed it on.
 
+### Open problem: Buds3 Pro blade lights
+
+Controlling the blade lights is not supported yet. What is known, measured on a
+Buds3 Pro with `tools/light-probe.py`, a webcam and a microphone:
+
+- Extended status byte 50 (`LightingControl`) stays 0 whatever the lights do;
+  it is most likely the configured style.
+- Msg 142 (`BUDS_LIGHTING_SYNC`) is answered by each bud with its current
+  light state, whatever payload you send. It reads `01` only while a light
+  effect is playing, and the buds send `142 01` on their own when a pinch
+  triggers the lights. It does not switch them.
+- Unnamed ids 220, 221 and 223–232 get no acknowledgement and change nothing.
+- Find My Earbuds (160/161) lights the blades at once; its loud melody only
+  ramps in after about 3 s, but quiet chirps start immediately. Muting the buds
+  (162) during a find also turns the lights off.
+
+The real command is what Galaxy Wearable sends from "Earbud lights controls".
+An Android Bluetooth HCI snoop log taken while changing the style is the way
+to find it. `tools/light-probe.py --help` lists the watch, scan and find modes.
+
 Every row change needs a test in `tests/test_protocol.py`, ideally with a real
 payload captured through `GALAXY_BUDS_DEBUG=1`.
 
