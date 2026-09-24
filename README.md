@@ -8,7 +8,7 @@ Samsung **Galaxy Buds Pro, Buds2 Pro, Buds3 Pro and Buds4 Pro** in the Omarchy
 bar: noise control, per-earbud and case battery, low battery warnings, the
 Bluetooth codec, 360 Audio, touch controls and quick connect.
 
-![The panel on a Galaxy Buds3 Pro: left bud worn, right bud charging in the case, and why ANC is off](preview.png)
+![The panel on a Galaxy Buds3 Pro: battery, noise control, settings, codec, and the installed firmware confirmed as the latest (sound was going to the laptop speakers, hence "Not the audio output")](preview.png)
 
 The icon follows the earbuds, not the other way around: change the mode by
 touching an earbud or from your phone and the bar updates immediately.
@@ -179,6 +179,8 @@ A charging bud counts as "in the case" even when its placement says otherwise.
 Buds4 Pro reports a freshly docked bud as out of the ear for a moment. The case
 only reports its own charge while at least one bud sits in it, so that row
 comes and goes.
+
+![Left bud worn, right bud charging in the open case, and why ANC is off](docs/in-case.png)
 
 ## Noise control with one earbud
 

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.akafrmn.galaxy-buds-pro",
   "name": "Galaxy Buds Pro",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "author": "Oleksii Lysenko (akafrmn), based on work by Aislan Dener Souza Vicentini",
   "license": "MIT",
   "description": "Samsung Galaxy Buds Pro, Buds2 Pro, Buds3 Pro and Buds4 Pro in the Omarchy bar: noise control, per-earbud and case battery with in-case status, low battery warnings, codec, firmware version, update check and install, 360 Audio, touch controls and quick connect.",

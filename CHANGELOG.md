@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.3.1] - 2026-09-24
+
+### Fixed
+- After a firmware install the earbuds repeat their result (`185 00 00`) on every connect until it
+  is acknowledged; the helper now answers it, as Samsung's app does.
+- `tools/eq-probe.py` could never connect: D-Bus object paths may not contain `-`.
+
+### Added
+- `tools/light-probe.py` (watch, scan, find, pulse modes) and a write-up in CONTRIBUTING of what the
+  Buds3 Pro blade lights do and do not answer. Light control itself is not shipped yet.
+
+### Changed
+- New screenshots from a Buds3 Pro on the latest firmware.
+
 ## [2.3.0] - 2026-09-24
 
 ### Added
@@ -94,6 +108,7 @@ First release as `io.github.akafrmn.galaxy-buds-pro`, based on
 - Plugin id is now `io.github.akafrmn.galaxy-buds-pro`. Remove `aislandener.galaxy-buds` before
   installing: only one program can hold the earbuds' control link.
 
+[2.3.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.3.1
 [2.3.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.3.0
 [2.2.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.2.0
 [2.1.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.1.1
