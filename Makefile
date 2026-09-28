@@ -25,5 +25,5 @@ lint:
 
 # Copy (never symlink: the validator rejects symlinks) into the plugins folder.
 dev-install:
-	rsync -a --delete --exclude .git --exclude __pycache__ ./ $(PLUGIN_DIR)/
+	rsync -a --delete --exclude .git --exclude .claude --exclude __pycache__ ./ $(PLUGIN_DIR)/
 	omarchy-shell shell rescanPlugins

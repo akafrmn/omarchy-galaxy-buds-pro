@@ -18,6 +18,14 @@ because only Buds3 Pro is verified by the maintainer. Use the
 | `tests/check_qml.py` | Catches a property or handler bound twice, which qmllint misses but the shell refuses to load |
 | `tools/eq-probe.py` | Asks a pair whether it accepts equalizer messages |
 
+## Ground rules
+
+- Run `make check` before every commit.
+- Model differences live only in `PROFILES` in `bin/galaxy-buds`; every row
+  change gets a test.
+- GalaxyBudsClient is GPL-3.0: use it for protocol facts, never copy its code.
+- The helper never writes files or elevates privileges.
+
 ## Dev loop
 
 ```bash

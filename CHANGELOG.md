@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.3.3] - 2026-09-28
+
+### Removed
+- `AGENTS.md` and `CLAUDE.md` from the repository root, so the installed plugin tree carries no
+  coding-agent instruction files (marketplace review). Their contributor rules now live in
+  CONTRIBUTING under Ground rules.
+
 ## [2.3.2] - 2026-09-24
 
 ### Changed

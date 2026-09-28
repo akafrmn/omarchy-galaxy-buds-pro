@@ -59,7 +59,7 @@ for path in ROOT.rglob("*"):
     check(not path.is_symlink(), f"symlink not allowed: {path.relative_to(ROOT)}")
 
 # The id is repeated in QML and docs; they must not drift from the manifest.
-for rel in ("Service.qml", "Panel.qml", "README.md", "tools/eq-probe.py", "AGENTS.md"):
+for rel in ("Service.qml", "Panel.qml", "README.md", "tools/eq-probe.py", "CONTRIBUTING.md"):
     text = (ROOT / rel).read_text()
     check(plugin_id in text, f"{rel}: does not mention {plugin_id}")
     for other in set(re.findall(r"io\.github\.[\w-]+\.galaxy-buds[\w-]*", text)) - {plugin_id}:
