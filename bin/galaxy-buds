@@ -479,10 +479,22 @@ def fetch_firmware_list(model):
 # GalaxyBudsClient project (no code taken). The host offers a table of
 # segments; the earbuds then pull every byte by offset, verify the CRCs and
 # install. Every guard below exists because a wrong flash cannot be undone.
-FIRMWARE_DOWNLOAD_URL = os.environ.get("GALAXY_BUDS_FIRMWARE_DOWNLOAD_URL",
-                                       "https://fw.timschneeberger.me/v3/firmware/download/{build}")
+FIRMWARE_DOWNLOAD_HOST = "fw.timschneeberger.me"
+FIRMWARE_DOWNLOAD_URL = "https://" + FIRMWARE_DOWNLOAD_HOST + "/v3/firmware/download/{build}"
+# The only images this plugin will send to earbuds: build -> (bytes, SHA-256).
+# The download server supplies the bytes but never the trust; an image must
+# match its row here exactly, or nothing is sent. Builds are added only by a
+# new plugin release, after hashing the image and checking it with
+# verify_firmware_image. Anything else gets the update notice without an
+# Install button. The README lists where and when each row was taken.
+PINNED_FIRMWARE = {
+    "R190XXU0AVF1": (2339478, "687011b78a2667d2e7d386c5968b09273a2876a91edf71893ce138f2137d8157"),  # Buds Pro
+    "R510XXU0AZD1": (6407748, "e8085cf7d2227d4514c3020ee3bbf34d85fb868950106283e58123f89a2216b3"),  # Buds2 Pro
+    "R630XXU0AZG2": (8683104, "2e1bd0151459c21daf2d669c6ff6b548821140a6247817fce9534a12299622ce"),  # Buds3 Pro
+}
+FIRMWARE_CONNECT_TIMEOUT = 20  # seconds per socket operation
+FIRMWARE_DOWNLOAD_DEADLINE = 300  # seconds for the whole download
 FIRMWARE_MAGIC = 0xCAFECAFE
-FIRMWARE_MAX_BYTES = 32 * 1024 * 1024
 FOTA_MTU_MAX = 650
 FLASH_MIN_BATTERY = 30
 FLASH_STEP_TIMEOUT = 30        # seconds of silence tolerated mid-transfer
@@ -561,7 +573,7 @@ def fota_chunk(data, offset, mtu):
     return struct.pack("<I", header) + chunk
 
 
-def flash_preflight(state, profile, target):
+def flash_preflight(state, profile, target, pinned=PINNED_FIRMWARE):
     """Reasons to refuse installing `target`; empty means safe to start."""
     reasons = []
     firmware = state.get("firmware") or {}
@@ -581,6 +593,8 @@ def flash_preflight(state, profile, target):
             reasons.append("That build is for a different model.")
         elif firmware_key(theirs) <= firmware_key(mine):
             reasons.append("Only upgrades are allowed; downgrades can brick the earbuds.")
+        elif target not in pinned:
+            reasons.append("This build is not reviewed for install here; use Galaxy Wearable.")
     if firmware.get("mismatch") or not (firmware.get("left") and firmware.get("right")):
         reasons.append("Both earbuds must be connected and on the same firmware.")
     placement = state.get("placement") or {}
@@ -594,23 +608,52 @@ def flash_preflight(state, profile, target):
     return reasons
 
 
-def fetch_firmware_image(build, progress=lambda done, total: None):
-    """Download into memory in chunks, reporting (bytes so far, total or 0)."""
+def check_pinned(data, build, pinned=PINNED_FIRMWARE):
+    """The image must be byte for byte the one pinned for `build`."""
+    import hashlib
+    if build not in pinned:
+        raise FirmwareError(f"{build} is not reviewed for install")
+    size, digest = pinned[build]
+    if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+        raise FirmwareError(f"image does not match the reviewed {build}")
+    return data
+
+
+def fetch_firmware_image(build, progress=lambda done, total: None, pinned=PINNED_FIRMWARE,
+                         clock=time.monotonic):
+    """Download a pinned build into memory, reporting (bytes so far, total).
+    Reads at most the pinned size plus one byte, follows no redirects and
+    gives up after FIRMWARE_DOWNLOAD_DEADLINE; the result is checked against
+    its pin before anything else looks at it."""
+    import urllib.parse
     import urllib.request
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            raise FirmwareError("the download server redirected; refusing")
+
+    if build not in pinned:
+        raise FirmwareError(f"{build} is not reviewed for install")
+    size = pinned[build][0]
     request = urllib.request.Request(FIRMWARE_DOWNLOAD_URL.format(build=build), headers={
         "User-Agent": f"omarchy-galaxy-buds-pro/{plugin_version()}"})
-    with urllib.request.urlopen(request, timeout=120) as response:
-        total = int(response.headers.get("Content-Length") or 0)
+    opener = urllib.request.build_opener(NoRedirect)
+    deadline = clock() + FIRMWARE_DOWNLOAD_DEADLINE
+    with opener.open(request, timeout=FIRMWARE_CONNECT_TIMEOUT) as response:
+        if urllib.parse.urlsplit(response.geturl()).hostname != FIRMWARE_DOWNLOAD_HOST:
+            raise FirmwareError("unexpected download origin")
         data = bytearray()
         while True:
-            chunk = response.read(64 * 1024)
+            chunk = response.read(min(64 * 1024, size + 1 - len(data)) or 1)
             if not chunk:
                 break
             data += chunk
-            if len(data) > FIRMWARE_MAX_BYTES:
-                raise FirmwareError("download larger than any firmware image")
-            progress(len(data), total)
-    return bytes(data)
+            if len(data) > size:
+                raise FirmwareError("download larger than the reviewed image")
+            if clock() > deadline:
+                raise FirmwareError("download took too long")
+            progress(len(data), size)
+    return check_pinned(bytes(data), build, pinned)
 
 
 def lock_payload(shape, enabled, touch):
@@ -768,6 +811,7 @@ class Daemon:
         # Firmware installation in progress, or None.
         self.flash = None
         self.fetch_image = fetch_firmware_image
+        self.pinned = PINNED_FIRMWARE
         self.clock = time.monotonic
 
     # ---- output ----------------------------------------------------------
@@ -1018,7 +1062,8 @@ class Daemon:
                                                     for e in entries if isinstance(e, dict)):
             return self.firmware_check_failed(profile_get(self.profile, "fw_model"), build)
         newer = latest_build(entries, build)
-        notice = {"build": newer["build"], "label": newer["label"]} if newer else None
+        notice = ({"build": newer["build"], "label": newer["label"],
+                   "installable": newer["build"] in self.pinned} if newer else None)
         self.firmware_results[(profile_get(self.profile, "fw_model"), build)] = notice
         current = ((self.state.get("firmware") or {}).get("build") or {}).get("build")
         if current == build and self.firmware_check:
@@ -1054,7 +1099,7 @@ class Daemon:
     def install_firmware(self, target):
         if self.flash:
             return
-        reasons = flash_preflight(self.state, self.profile, target)
+        reasons = flash_preflight(self.state, self.profile, target, self.pinned)
         if reasons:
             self.update({"firmware_install": {"stage": "refused", "target": target, "reasons": reasons}})
             return
@@ -1072,7 +1117,8 @@ class Daemon:
 
         def job():
             try:
-                image = verify_firmware_image(self.fetch_image(target, progress), target)
+                data = check_pinned(self.fetch_image(target, progress), target, self.pinned)
+                image = verify_firmware_image(data, target)
             except Exception as error:  # network, TLS, verification
                 message = str(error) if isinstance(error, FirmwareError) else "Download failed."
                 self.defer(lambda: self.flash_fail(f"Nothing was sent to the earbuds: {message}") or False)
@@ -1090,7 +1136,7 @@ class Daemon:
         if not self.flash or self.flash["target"] != target:
             return
         # Things may have changed during the download: check again.
-        reasons = flash_preflight(self.state, self.profile, target)
+        reasons = flash_preflight(self.state, self.profile, target, self.pinned)
         if reasons:
             self.flash = None
             self.update({"firmware_install": {"stage": "refused", "target": target, "reasons": reasons}})

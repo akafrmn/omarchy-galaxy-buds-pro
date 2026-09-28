@@ -219,7 +219,9 @@ year (`Z` = 2026), month (`D` = April) and revision (`2`).
 With `firmwareCheck` on (the default), the plugin looks up the newest build for
 your model and says so under the version: `✓ Latest version · checked 02:29`,
 `Checking…`, or `Couldn't check for updates`. When there is a newer build it
-shows `Update available: R630XXU0AZG2 (Jul 2026).` and an **Install** button.
+shows `Update available: R630XXU0AZG2 (Jul 2026).`, plus an **Install** button
+when that exact build is one of the [installable builds](#installable-builds).
+Any other build gets the notice only, with a pointer to Galaxy Wearable.
 
 - **Where it looks:** the public build list at `fw.timschneeberger.me`, which
   the GalaxyBudsClient author keeps in sync with Samsung's servers.
@@ -248,6 +250,8 @@ update found, installing (steps, live bar, MB sent and time left), up to date.
 Before anything is sent, the plugin refuses unless all of this holds. The
 helper checks it, not just the button:
 
+- the build is pinned in the plugin source (see below), and the downloaded
+  image matches its pinned size and SHA-256 byte for byte;
 - the build is the one the panel offered, for your exact model, and **newer**
   than what is installed (no downgrades: that is where earbuds got bricked);
 - both earbuds are connected, on the same build, with at least 30% battery,
@@ -266,6 +270,27 @@ earbuds whose install goes wrong. The guards above close the known ways that
 happened (wrong model, downgrades, mismatched buds), but the install is
 Samsung's code running on your earbuds. If you would rather not take any
 risk, install from Galaxy Wearable on a phone.
+
+### Installable builds
+
+The download server supplies the bytes but not the trust. Only these images,
+pinned in `PINNED_FIRMWARE` in `bin/galaxy-buds`, can be sent to earbuds. The
+helper requests nothing else, follows no redirects, stops reading past the
+pinned size and gives up after 5 minutes. A build is added only in a new plugin
+release, so a change at the server cannot put different firmware on your earbuds.
+
+| Model | Build | Bytes | SHA-256 | Installed by a maintainer |
+|---|---|---|---|---|
+| Buds Pro (SM-R190) | `R190XXU0AVF1` | 2339478 | `687011b78a2667d2e7d386c5968b09273a2876a91edf71893ce138f2137d8157` | no |
+| Buds2 Pro (SM-R510) | `R510XXU0AZD1` | 6407748 | `e8085cf7d2227d4514c3020ee3bbf34d85fb868950106283e58123f89a2216b3` | no |
+| Buds3 Pro (SM-R630) | `R630XXU0AZG2` | 8683104 | `2e1bd0151459c21daf2d669c6ff6b548821140a6247817fce9534a12299622ce` | yes, from R630XXU0AZD2 |
+
+Each image was downloaded from
+`https://fw.timschneeberger.me/v3/firmware/download/<build>` on 2026-09-28,
+hashed, and checked with the same container, CRC32, model and build-string
+checks the helper runs. Buds4 Pro (`R640XXU0AZD2`) is not pinned: its image also
+names another build (`R640BCU0AZD1`), which those checks refuse, so Buds4 Pro
+gets the update notice only.
 
 From a keybind or script, the exact build acts as the confirmation:
 `omarchy-shell io.github.akafrmn.galaxy-buds-pro firmwareInstall R630XXU0AZG2`.

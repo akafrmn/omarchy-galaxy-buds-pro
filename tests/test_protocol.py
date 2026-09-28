@@ -4,6 +4,7 @@
 import importlib.util
 import json
 import pathlib
+import re
 import sys
 from importlib.machinery import SourceFileLoader
 
@@ -618,7 +619,8 @@ def test_version_message_updates_state_and_checks_for_an_update():
     daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
     assert daemon.state["firmware"]["build"]["label"] == "Apr 2026"
     assert daemon.state["firmware"]["mismatch"] is False
-    assert daemon.state["firmware_update"] == {"build": "R630XXU0AZG2", "label": "Jul 2026"}
+    assert daemon.state["firmware_update"] == {"build": "R630XXU0AZG2", "label": "Jul 2026",
+                                               "installable": True}
     assert calls == ["Buds3Pro"]
     # A second report of the same build does not ask again within 12 hours.
     daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
@@ -725,6 +727,11 @@ def sent(sock, msg_id=None):
     return out
 
 
+def pin(data):
+    import hashlib
+    return (len(data), hashlib.sha256(data).hexdigest())
+
+
 def ready_to_flash(image_bytes=None, target="R630XXU0AZG2"):
     daemon = gb.Daemon()
     daemon.profile = profile("buds3pro")
@@ -738,11 +745,12 @@ def ready_to_flash(image_bytes=None, target="R630XXU0AZG2"):
             progress(len(image_bytes) * part // 3, len(image_bytes))
         return image_bytes
     daemon.fetch_image = fetch_image
+    daemon.pinned = {target: pin(image_bytes)}
     daemon.state.update({
         "connected": True,
         "firmware": {"left": "R630XXU0AZD2", "right": "R630XXU0AZD2", "mismatch": False,
                      "build": gb.decode_firmware("R630XXU0AZD2")},
-        "firmware_update": {"build": target, "label": "Jul 2026"},
+        "firmware_update": {"build": target, "label": "Jul 2026", "installable": True},
         "placement": {"left": "wearing", "right": "idle"}, "wearing": {"left": 1, "right": 2},
         "battery": {"left": 80, "right": 75, "case": 50}})
     return daemon
@@ -1015,6 +1023,118 @@ def test_a_late_install_result_is_acknowledged():
     # Other firmware messages outside an install are still ignored.
     daemon.handle(gb.MSG_FOTA_CONTROL, bytes([0, 100, 0]))
     assert len(daemon.socket.frames) == 1
+
+# ---- pinned images ----------------------------------------------------------
+
+def test_pinned_rows_are_well_formed_pro_builds():
+    pro = {"R190", "R510", "R630", "R640"}
+    assert gb.PINNED_FIRMWARE, "at least one reviewed build"
+    for build, (size, digest) in gb.PINNED_FIRMWARE.items():
+        decoded = gb.decode_firmware(build)
+        assert decoded and decoded["model"] in pro, build
+        assert isinstance(size, int) and 0 < size <= 32 * 1024 * 1024, build
+        assert re.fullmatch(r"[0-9a-f]{64}", digest), build
+
+
+def test_unpinned_build_is_offered_without_install():
+    builds = [{"buildName": "R630XXU0AZL9"}]   # newer than anything pinned
+    daemon = firmware_daemon(lambda model: builds)
+    daemon.firmware_check = True
+    daemon.handle(gb.MSG_VERSION_INFO_LONG, LIVE_VERSION_INFO)
+    assert daemon.state["firmware_update"]["installable"] is False
+    daemon = ready_to_flash(target="R630XXU0AZL9")
+    daemon.pinned = {}
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZL9"}')
+    assert daemon.socket.frames == []
+    assert daemon.state["firmware_install"]["stage"] == "refused"
+    assert any("not reviewed" in r for r in daemon.state["firmware_install"]["reasons"])
+
+
+def test_image_that_differs_from_its_pin_is_never_sent():
+    image, _ = make_image()
+    swapped = make_image(segments=((6, 1234), (7, 778)))[0]   # valid container, other bytes
+    for served in (swapped, image[:-1], image + b"\0"):
+        daemon = ready_to_flash(image)
+        daemon.fetch_image = lambda build, progress=None, served=served: served
+        daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+        assert daemon.socket.frames == []
+        assert daemon.state["firmware_install"]["stage"] == "failed"
+        assert "does not match the reviewed" in daemon.state["firmware_install"]["error"]
+
+
+class FakeResponse:
+    def __init__(self, data, url):
+        self.data, self.url = data, url
+
+    def read(self, n):
+        chunk, self.data = self.data[:n], self.data[n:]
+        return chunk
+
+    def geturl(self):
+        return self.url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def fetch_with(served, url=None, pinned=None, clock=None):
+    """fetch_firmware_image against a fake opener: (bytes or FirmwareError, what it asked for)."""
+    import urllib.request
+    image, _ = make_image()
+    pinned = pinned if pinned is not None else {"R630XXU0AZG2": pin(image)}
+    seen = {}
+
+    class Opener:
+        def open(self, request, timeout):
+            seen.update(url=request.full_url, timeout=timeout)
+            return FakeResponse(served, url or request.full_url)
+
+    def build_opener(*handlers):
+        seen["handlers"] = handlers
+        return Opener()
+
+    real = urllib.request.build_opener
+    urllib.request.build_opener = build_opener
+    try:
+        kwargs = {"clock": clock} if clock else {}
+        return gb.fetch_firmware_image("R630XXU0AZG2", pinned=pinned, **kwargs), seen
+    except gb.FirmwareError as error:
+        return error, seen
+    finally:
+        urllib.request.build_opener = real
+
+
+def test_fetch_returns_only_the_pinned_bytes_and_never_redirects():
+    image, _ = make_image()
+    result, seen = fetch_with(image)
+    assert result == image
+    assert seen["url"] == "https://fw.timschneeberger.me/v3/firmware/download/R630XXU0AZG2"
+    assert seen["timeout"] == gb.FIRMWARE_CONNECT_TIMEOUT
+    handler, = seen["handlers"]
+    try:
+        handler().redirect_request(None, None, 302, "Found", {}, "https://elsewhere.example/")
+        raise AssertionError("redirect followed")
+    except gb.FirmwareError:
+        pass
+
+
+def test_fetch_refuses_oversize_unpinned_slow_and_foreign_downloads():
+    image, _ = make_image()
+    ticks = iter(range(0, 10 ** 6, gb.FIRMWARE_DOWNLOAD_DEADLINE + 1))
+    cases = {
+        "oversize": fetch_with(image + bytes(1024 * 1024)),
+        "unpinned": fetch_with(image, pinned={}),
+        "other host": fetch_with(image, url="https://elsewhere.example/R630XXU0AZG2"),
+        "wrong bytes": fetch_with(make_image(segments=((6, 1234), (7, 778)))[0]),
+        "too slow": fetch_with(image, clock=lambda: next(ticks)),
+    }
+    for name, (result, _) in cases.items():
+        assert isinstance(result, gb.FirmwareError), name
+    assert cases["unpinned"][1] == {}, "an unpinned build is never requested"
+
 
 if __name__ == "__main__":
     failures = 0

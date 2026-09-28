@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.4.0] - 2026-09-28
+
+### Changed
+- Firmware installs are limited to images pinned in the plugin source by build, size and SHA-256
+  (`PINNED_FIRMWARE`): Buds Pro R190XXU0AVF1, Buds2 Pro R510XXU0AZD1 and Buds3 Pro R630XXU0AZG2.
+  A downloaded image must match its pin byte for byte before anything is sent; any other build
+  gets the update notice without an Install button (marketplace review). The pinned images and
+  where they came from are listed in the README under Installable builds.
+- The image download follows no redirects, only accepts `fw.timschneeberger.me`, stops reading
+  past the pinned size, and has a 20 s connect timeout and a 5 minute overall deadline.
+
+### Removed
+- The `GALAXY_BUDS_FIRMWARE_DOWNLOAD_URL` override for the image download.
+
 ## [2.3.3] - 2026-09-28
 
 ### Removed

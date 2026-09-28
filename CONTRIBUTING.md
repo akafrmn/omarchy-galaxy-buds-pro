@@ -103,6 +103,18 @@ payload captured through `GALAXY_BUDS_DEBUG=1`.
 GalaxyBudsClient is GPL-3.0 and this project is MIT. Read it for protocol
 facts (offsets, ids, message numbers), but **do not copy its code**.
 
+## Pinning a firmware build
+
+Only builds in `PINNED_FIRMWARE` (`bin/galaxy-buds`) can be installed. To add one:
+
+1. Download `https://fw.timschneeberger.me/v3/firmware/download/<build>` and
+   run it through `verify_firmware_image(data, build)`; it must pass unchanged.
+2. Add `"<build>": (<bytes>, "<sha256>")` to `PINNED_FIRMWARE`, and a row with
+   the same values, the date and whether it was installed on real earbuds to the
+   README's Installable builds table.
+3. Release it as a new version. Never add a fallback that trusts an unpinned
+   image, not even behind a setting or an environment variable.
+
 ## Commits and pull requests
 
 - [Conventional commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `test:`, `chore:`.

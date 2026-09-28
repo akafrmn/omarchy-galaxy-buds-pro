@@ -766,8 +766,19 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
+          Text {
+            width: parent.width
+            visible: root.firmwareUpdate !== null && root.firmwareUpdate.installable !== true && !root.install
+            text: root.t("fwNotReviewed", "This build is not reviewed for install here yet; Galaxy Wearable can install it.")
+            color: root.dim
+            wrapMode: Text.WordWrap
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
           Button {
-            visible: root.firmwareUpdate !== null && !root.install && !root.confirmInstall
+            visible: root.firmwareUpdate !== null && root.firmwareUpdate.installable === true
+                     && !root.install && !root.confirmInstall
             text: root.t("fwInstall", "Install") + " " + (root.firmwareUpdate ? root.firmwareUpdate.build : "")
             bordered: true
             foreground: root.foreground
@@ -780,7 +791,8 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.space(6)
-            visible: root.confirmInstall && root.firmwareUpdate !== null && !root.install
+            visible: root.confirmInstall && root.firmwareUpdate !== null
+                     && root.firmwareUpdate.installable === true && !root.install
 
             Text {
               width: parent.width
@@ -788,7 +800,7 @@ Panel {
                     "Install " + (root.firmwareUpdate ? root.firmwareUpdate.build : "") + " on both earbuds? "
                     + "It takes about 15 minutes. Keep both earbuds out of the closed case, charged and near "
                     + "this computer, and leave Bluetooth on. The image comes from the community mirror of "
-                    + "Samsung's builds and is checked before anything is sent. If the transfer stops, the "
+                    + "Samsung's builds and must match the copy reviewed for this plugin before anything is sent. If the transfer stops, the "
                     + "earbuds keep their current firmware, but there is no recovery if an install goes wrong.")
               color: root.foreground
               wrapMode: Text.WordWrap
