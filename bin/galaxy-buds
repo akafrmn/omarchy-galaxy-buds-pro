@@ -61,6 +61,9 @@ FOTA_MESSAGES = (MSG_FOTA_RESULT, MSG_FOTA_OPEN, MSG_FOTA_CONTROL, MSG_FOTA_DOWN
 FLAG_RESPONSE = 0x1000
 FLAG_FRAGMENT = 0x2000
 
+# ConnectProfile errors meaning BlueZ has no registration of ours any more.
+PROFILE_GONE_ERRORS = ("profile-unavailable", "InvalidArguments", "ServiceUnknown", "UnknownObject")
+
 MODES = {"off": 0, "anc": 1, "ambient": 2}
 MODE_NAMES = {v: k for k, v in MODES.items()}
 
@@ -934,7 +937,21 @@ class Daemon:
         self.connecting = False
         if "AlreadyConnected" in str(error) or self.socket:
             return
+        if any(marker in str(error) for marker in PROFILE_GONE_ERRORS):
+            # BlueZ no longer knows our profile (it restarted under us), so
+            # the next register tick has to hand it over again.
+            self.registered = False
         self.update({"connected": False, "reason": "connect failed"})
+
+    def on_bluez_owner_changed(self, name, old_owner, new_owner):
+        """bluetoothd restarted or went away. A new instance has none of our
+        registrations and the old one took the link with it: start over."""
+        if self.socket:
+            self.disconnect()
+        self.connecting = False
+        self.registered = False
+        if new_owner and self.refresh_manager():
+            self.register_profile()
 
     def on_new_connection(self, fd):
         import socket
@@ -1389,7 +1406,8 @@ class Daemon:
         the moment the old one exits, this one takes over."""
         import dbus
         if self.registered:
-            return False
+            # Keep the timer: BlueZ can drop the registration later (restart).
+            return True
         try:
             self.manager.UnregisterProfile(self.profile_path)
         except dbus.DBusException:
@@ -1401,7 +1419,25 @@ class Daemon:
                                           "Name": "omarchy-galaxy-buds"})
             self.registered = True
         except dbus.DBusException:
+            # Also covers a proxy left pointing at a bluetoothd that is gone.
+            self.refresh_manager()
             self.update({"connected": False, "reason": "profile busy"})
+        return True
+
+    def profile_manager(self):
+        import dbus
+        return dbus.Interface(self.bus.get_object("org.bluez", "/org/bluez"),
+                              "org.bluez.ProfileManager1")
+
+    def refresh_manager(self):
+        """Point the proxy at the current bluetoothd. While none is on the bus
+        this raises, and an exception would cancel the GLib timer calling us,
+        so keep the old proxy and let the register tick try again."""
+        import dbus
+        try:
+            self.manager = self.profile_manager()
+        except dbus.DBusException:
+            return False
         return True
 
     # ---- lifecycle -------------------------------------------------------
@@ -1419,7 +1455,7 @@ class Daemon:
         class BluezProfile(dbus.service.Object):
             @dbus.service.method("org.bluez.Profile1", in_signature="", out_signature="")
             def Release(self):
-                pass
+                daemon.registered = False
 
             @dbus.service.method("org.bluez.Profile1", in_signature="oha{sv}", out_signature="")
             def NewConnection(self, path, fd, properties):
@@ -1431,8 +1467,12 @@ class Daemon:
 
         self.profile_path = "/omarchy/galaxybuds"
         BluezProfile(self.bus, self.profile_path)
-        self.manager = dbus.Interface(self.bus.get_object("org.bluez", "/org/bluez"),
-                                      "org.bluez.ProfileManager1")
+        self.manager = self.profile_manager()
+        # A proxy is bound to the bluetoothd it was made for, and a restarted
+        # bluetoothd forgets our profile: watch for it and register again.
+        self.bus.add_signal_receiver(self.on_bluez_owner_changed, signal_name="NameOwnerChanged",
+                                     dbus_interface="org.freedesktop.DBus",
+                                     path="/org/freedesktop/DBus", arg0="org.bluez")
 
         # Which service to register depends on the model, and the model is only
         # known once a device is found, so start on the newest and let connect()
