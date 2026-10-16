@@ -7,7 +7,8 @@
 Samsung **Galaxy Buds Pro, Buds2 Pro, Buds3 Pro and Buds4 Pro** in the Omarchy
 bar, including **firmware updates straight from your desktop — no phone, no
 Galaxy Wearable**. Plus noise control, per-earbud and case battery, low battery
-warnings, the Bluetooth codec, 360 Audio, touch controls and quick connect.
+warnings, equalizer presets, the Bluetooth codec, 360 Audio, touch controls and
+quick connect.
 
 ![The panel on a Galaxy Buds3 Pro: battery, noise control, settings, codec, and the installed firmware confirmed as the latest (sound was going to the laptop speakers, hence "Not the audio output")](preview.png)
 
@@ -124,6 +125,7 @@ bind = SUPER SHIFT, N, exec, omarchy-shell io.github.akafrmn.galaxy-buds-pro set
 |---|---|
 | `cycle` | Next noise mode the model supports |
 | `set <off\|anc\|ambient>` | Set a noise mode |
+| `eq <off\|bass\|soft\|dynamic\|clear\|treble>` | Set an equalizer preset |
 | `codec <profile>` | Pin a PipeWire card profile |
 | `status` | Print the current state as JSON |
 | `open` / `close` / `toggle` | The panel |
@@ -164,6 +166,9 @@ Every key is optional. Anything you leave out keeps its English text.
 | `noiseControl` / `settings` / `codec` | Noise control / Settings / Codec |
 | `off` / `anc` / `ambient` / `adaptive` | Off / ANC / Ambient / Adaptive |
 | `spatial` / `touch` / `seamless` | 360 Audio / Touch controls / Quick connect |
+| `eq` / `eqCustom` | Equalizer / Custom |
+| `eqOff` / `eqBass` / `eqSoft` | Off / Bass boost / Soft |
+| `eqDynamic` / `eqClear` / `eqTreble` | Dynamic / Clear / Treble boost |
 | `left` / `right` / `case` / `inCase` | L / R / Case / In case |
 | `ancOneBud` | ANC needs both earbuds in. Galaxy Wearable can allow it with one. |
 | `notOutput` | Not the audio output |
@@ -207,6 +212,23 @@ controls with one earbud** is enabled in Galaxy Wearable. Ambient still works.
 On Buds3, Buds3 Pro, Buds4 and Buds4 Pro the plugin reads that setting and
 shows a hint under the mode buttons instead of a click that silently does
 nothing. The panel always shows the mode the earbuds actually applied.
+
+## Equalizer
+
+The Equalizer section offers Samsung's six presets in two rows: **Off**, **Bass
+boost**, **Soft**, **Dynamic**, **Clear** and **Treble boost**. The preset is
+read from the earbuds when they connect, and the highlighted one is what the
+earbuds acknowledged, not just what was clicked.
+
+A custom curve set in Galaxy Wearable (value `6`, confirmed on a Buds3 Pro)
+shows as `Equalizer · Custom` with no preset lit. The plugin cannot edit that
+curve; picking a preset replaces it. GalaxyBudsClient reads custom as `7`
+instead; a value the plugin does not know leaves every preset unlit, and the
+presets still work.
+
+The section shows on every model from Buds+ on. The original Galaxy Buds encode
+their equalizer differently, so it is hidden there, as on a model the plugin
+does not recognise.
 
 ## Codec
 
@@ -389,7 +411,6 @@ test. See [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Firmware installs confirmed on every Pro model.** Verified on Buds3 Pro;
   Buds Pro, Buds2 Pro and Buds4 Pro use the same transfer. A report from an
   owner moves each to verified.
-- **Equalizer presets**, once `tools/eq-probe.py` confirms them per model.
 
 ## FAQ
 
@@ -399,10 +420,12 @@ directories, and the plugin validator rejects symlinks. A package could only
 ship a "copy me in" script, which would then fight `omarchy plugin update`.
 `omarchy plugin add` is the supported distribution channel.
 
-**Equalizer?** Not yet. Buds4 Pro acks EQ presets (message `0x86`, seen in
-hmarquez-solutions/omarchy-buds), but no preset UI ships here until it is
-confirmed on each Pro model. `tools/eq-probe.py` asks your pair directly. Post
-what it prints in an issue.
+**Custom equalizer?** Presets only (see [Equalizer](#equalizer)). The 9-band
+custom curve exists only on the Buds3 and Buds4 generations, its bands cannot be
+read back reliably, and keeping them would mean storing state, which this
+plugin does not do. If a preset does not change the sound on your pair,
+`tools/eq-probe.py` shows what the earbuds answer. Post what it prints in an
+issue.
 
 **Can it install firmware updates?** Yes, upgrades only, with the guards in
 [Installing an update](#installing-an-update). Verified on a Buds3 Pro

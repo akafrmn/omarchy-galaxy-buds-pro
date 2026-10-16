@@ -43,6 +43,20 @@ Panel {
     var worn = (placement.left === "wearing" ? 1 : 0) + (placement.right === "wearing" ? 1 : 0)
     return worn === 1
   }
+  // The preset the earbuds report, "custom" for a curve set in Galaxy
+  // Wearable, or "unknown" for a value the helper doesn't know; neither has a
+  // chip, but the presets still work. Absent only on models it is not read from.
+  readonly property string eq: String(buds.eq || "")
+  readonly property bool hasEq: buds.eq !== undefined
+  // Two rows of three: six chips side by side run past the panel's edge.
+  readonly property var eqRows: [
+    [{value: "off", label: t("eqOff", "Off")},
+     {value: "bass", label: t("eqBass", "Bass boost")},
+     {value: "soft", label: t("eqSoft", "Soft")}],
+    [{value: "dynamic", label: t("eqDynamic", "Dynamic")},
+     {value: "clear", label: t("eqClear", "Clear")},
+     {value: "treble", label: t("eqTreble", "Treble boost")}]
+  ]
   readonly property var codec: buds.codec || ({})
   readonly property var codecOptions: codec.options || []
   // Two pairs can be connected at once; this says whether the one being shown
@@ -228,14 +242,18 @@ Panel {
   property int groupIndex: 0
 
   // Flat list of keyboard-reachable rows. Each entry is one stop for the
-  // up/down cursor: the noise-mode chips, each settings toggle, then the
-  // codec chips. `groupIndex` is the chip highlighted inside a "modes" or
-  // "codec" row — a plain int because only one chip row is focused at a time.
+  // up/down cursor: the noise-mode chips, each settings toggle, the two
+  // equalizer chip rows, then the codec chips. `groupIndex` is the chip
+  // highlighted inside a chip row — a plain int because only one chip row is
+  // focused at a time.
   readonly property var focusableRows: {
     var rows = []
     if (connected && hasModes) rows.push({type: "modes"})
     for (var i = 0; i < toggleRows.length; i++)
       rows.push({type: "toggle", index: i})
+    if (connected && hasEq)
+      for (var r = 0; r < eqRows.length; r++)
+        rows.push({type: "eq", index: r})
     if (codecOptions.length > 1) rows.push({type: "codec"})
     return rows
   }
@@ -304,6 +322,7 @@ Panel {
   function cycle() { if (service) service.cycle() }
   function setToggle(name, value) { if (service) service.setToggle(name, value) }
   function setCodec(profile) { if (service) service.setCodec(profile) }
+  function setEq(preset) { if (service) service.setEq(preset) }
 
   // ---- firmware installation --------------------------------------------
   readonly property var install: buds.firmware_install || null
@@ -409,9 +428,26 @@ Panel {
     return (o && typeof o === "object") ? String(o.value) : String(o)
   }
 
+  function isChipRow(row) {
+    return !!row && (row.type === "modes" || row.type === "eq" || row.type === "codec")
+  }
+
   function groupOptions(row) {
     if (!row) return []
-    return row.type === "modes" ? root.modeOptions : root.codecOptions
+    if (row.type === "modes") return root.modeOptions
+    if (row.type === "eq") return root.eqRows[row.index] || []
+    return root.codecOptions
+  }
+
+  // Index of the chip that is on in a chip row, or -1 (the active preset can
+  // sit in the other equalizer row, or be custom and have no chip at all).
+  function selectedGroupIndex(row) {
+    if (row.type === "modes") return modeGroup.selectedOptionIndex()
+    if (row.type === "codec") return codecGroup.selectedOptionIndex()
+    var opts = groupOptions(row)
+    for (var i = 0; i < opts.length; i++)
+      if (optionValue(opts[i]) === root.eq) return i
+    return -1
   }
 
   function rowIndexFor(type) {
@@ -420,27 +456,29 @@ Panel {
     return -1
   }
 
-  function toggleRowIndex(toggleIndex) {
+  function indexedRowIndex(type, rowIndex) {
     for (var i = 0; i < focusableRows.length; i++)
-      if (focusableRows[i].type === "toggle" && focusableRows[i].index === toggleIndex)
+      if (focusableRows[i].type === type && focusableRows[i].index === rowIndex)
         return i
     return -1
   }
 
+  function toggleRowIndex(toggleIndex) { return indexedRowIndex("toggle", toggleIndex) }
+  function eqRowIndex(eqRow) { return indexedRowIndex("eq", eqRow) }
+
   function selectCursor(index) {
     cursorIndex = Math.max(0, Math.min(cursorCount - 1, index))
     var row = focusedRow()
-    if (row && (row.type === "modes" || row.type === "codec")) {
+    if (isChipRow(row)) {
       var opts = groupOptions(row)
-      var selected = row.type === "modes"
-        ? modeGroup.selectedOptionIndex() : codecGroup.selectedOptionIndex()
+      var selected = selectedGroupIndex(row)
       groupIndex = (selected < 0 || selected >= opts.length) ? 0 : selected
     }
   }
 
   function moveGroupCursor(delta) {
     var row = focusedRow()
-    if (!row || (row.type !== "modes" && row.type !== "codec")) return
+    if (!isChipRow(row)) return
     var opts = groupOptions(row)
     if (opts.length <= 0) return
     if (groupIndex < 0) groupIndex = 0
@@ -457,6 +495,9 @@ Panel {
     } else if (row.type === "toggle") {
       var toggle = root.toggleRows[row.index]
       if (toggle) setToggle(toggle.key, !toggle.checked)
+    } else if (row.type === "eq") {
+      var preset = groupOptions(row)[groupIndex]
+      if (preset) setEq(preset.value)
     } else if (row.type === "codec") {
       var codec = root.codecOptions[groupIndex]
       if (codec !== undefined && codec !== null) setCodec(optionValue(codec))
@@ -487,8 +528,8 @@ Panel {
     contentWidth: panel.fittedContentWidth(Style.space(root.codecOptions.length > 2 ? 400 : 320))
     // The cap only exists to stop a runaway panel; the real limit is the
     // screen. 420 cut the codec row off once battery, modes, three toggles and
-    // codecs were all on screen at once.
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(620))
+    // codecs were all on screen at once, and the equalizer adds three rows.
+    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(780))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -703,6 +744,42 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               onHovered: function(on) { if (on) root.selectCursor(root.toggleRowIndex(index)) }
               onToggled: root.setToggle(modelData.key, !modelData.checked)
+            }
+          }
+        }
+
+        PanelSectionHeader {
+          width: parent.width
+          // A custom curve comes from Galaxy Wearable and has no chip here;
+          // picking a preset replaces it.
+          text: root.t("eq", "Equalizer") + (root.eq === "custom" ? "  ·  " + root.t("eqCustom", "Custom") : "")
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          visible: root.connected && root.hasEq
+        }
+
+        Repeater {
+          model: root.connected && root.hasEq ? root.eqRows : []
+
+          ButtonGroup {
+            required property var modelData
+            required property int index
+            width: panelColumn.width
+            options: modelData
+            value: root.eq
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            cursorIndex: (root.focusedRow() && root.focusedRow().type === "eq"
+                          && root.focusedRow().index === index) ? root.groupIndex : -1
+            onChanged: function(value) {
+              root.selectCursor(root.eqRowIndex(index))
+              root.setEq(value)
+            }
+            onHovered: function(chip, isHovered) {
+              if (isHovered) {
+                root.selectCursor(root.eqRowIndex(index))
+                root.groupIndex = chip
+              }
             }
           }
         }

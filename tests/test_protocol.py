@@ -1349,6 +1349,135 @@ def test_update_check_works_during_a_firmware_transfer():
     assert daemon.state["plugin"]["status"] == "latest"
 
 
+# ---- equalizer --------------------------------------------------------------
+
+# Extended status captured from a Buds3 Pro on R630XXU0AZG2 (revision 4) with
+# a custom curve set in Galaxy Wearable: byte 9 is 6. Noise off, left bud out
+# of the ear, right in the open case.
+BUDS3PRO_CUSTOM_EQ = bytes.fromhex(
+    "04 08 5c 64 01 00 23 53 00 06 ff 22 00 00 55 01 55 01 03 00 04 5a 00 04 04 10 00 01 00 00 00"
+    " 02 00 01 00 01 00 00 00 00 00 00 00 00 00 00 01 01 00 02 00 03 00 01 ff 01 02 00 00 00 00")
+
+
+def eq_daemon(name="buds3pro"):
+    daemon = gb.Daemon()
+    daemon.profile = profile(name) if name else gb.UNKNOWN_PROFILE
+    daemon.emit = lambda: None
+    daemon.socket = FakeSocket()
+    return daemon
+
+
+def test_eq_captured_buds3_pro_status_reads_custom():
+    state = gb.parse_extended_status(BUDS3PRO_CUSTOM_EQ, profile("buds3pro"))
+    assert state["revision"] == 4
+    assert state["eq"] == "custom"
+    assert state["noise"] == "off"
+    assert state["battery"] == {"left": 92, "right": 100, "case": 83}
+
+
+def test_eq_payload_byte_per_preset():
+    expected = {"off": 0, "bass": 1, "soft": 2, "dynamic": 3, "clear": 4, "treble": 5}
+    for preset, byte in expected.items():
+        daemon = eq_daemon()
+        daemon.command(json.dumps({"cmd": "eq", "value": preset}))
+        frame = daemon.socket.frames[0]
+        assert frame[3] == 0x86 and frame[4:5] == bytes([byte]), preset
+        assert sent(daemon.socket) == [(gb.MSG_EQUALIZER, bytes([byte]), 0)], preset
+
+
+def test_eq_command_never_sends_custom_or_unknown_values():
+    for value in ("custom", "unknown", "loud", "", 3, 6, 7, None, ["bass"], {"preset": "bass"}):
+        daemon = eq_daemon()
+        daemon.command(json.dumps({"cmd": "eq", "value": value}))
+        assert daemon.socket.frames == [], value
+
+
+def test_eq_byte_sits_at_11_on_buds_plus_and_9_from_buds_live_on():
+    payload = bytearray(budsplus_payload())
+    payload[9], payload[11] = 3, 1
+    assert gb.parse_extended_status(bytes(payload), profile("budsplus"))["eq"] == "bass"
+    payload = bytearray(extended_payload())
+    payload[9], payload[11] = 3, 1
+    for name in ("budslive", "budspro", "buds2pro", "buds3pro", "buds4pro"):
+        assert gb.parse_extended_status(bytes(payload), profile(name))["eq"] == "dynamic", name
+
+
+def test_eq_is_hidden_only_where_the_model_does_not_report_it():
+    payload = bytearray(20)
+    payload[6], payload[11] = 3, 2   # the original Buds keep their own EQ byte at 11
+    assert "eq" not in gb.parse_extended_status(bytes(payload), profile("buds"))
+    assert "eq" not in gb.parse_extended_status(BUDS3PRO_CUSTOM_EQ, gb.UNKNOWN_PROFILE)
+    for name in ("buds", None):
+        daemon = eq_daemon(name)
+        daemon.command('{"cmd":"eq","value":"bass"}')
+        assert daemon.socket.frames == [], name
+        daemon.handle_ack(gb.MSG_EQUALIZER, bytes([1]))
+        assert "eq" not in daemon.state, name
+
+
+def test_eq_unknown_byte_keeps_the_control():
+    for byte in (7, 8, 0x42, 0xFF):
+        payload = bytearray(BUDS3PRO_CUSTOM_EQ)
+        payload[9] = byte
+        assert gb.parse_extended_status(bytes(payload), profile("buds3pro"))["eq"] == "unknown", byte
+        daemon = eq_daemon()
+        daemon.handle_ack(gb.MSG_EQUALIZER, bytes([byte]))
+        assert daemon.state["eq"] == "unknown", byte
+    # The presets can still be picked from there.
+    daemon.command('{"cmd":"eq","value":"clear"}')
+    assert sent(daemon.socket) == [(gb.MSG_EQUALIZER, bytes([4]), 0)]
+
+
+def test_eq_custom_curve_is_replaced_by_a_preset():
+    daemon = eq_daemon()
+    daemon.handle(gb.MSG_EXTENDED_STATUS, BUDS3PRO_CUSTOM_EQ)
+    assert daemon.state["eq"] == "custom"
+    daemon.command('{"cmd":"eq","value":"soft"}')
+    daemon.handle(gb.MSG_ACK, bytes([gb.MSG_EQUALIZER, 2]))
+    assert daemon.state["eq"] == "soft"
+
+
+def test_eq_is_blocked_during_a_firmware_transfer():
+    daemon = eq_daemon()
+    daemon.flash = {"stage": "transferring"}
+    daemon.command('{"cmd":"eq","value":"bass"}')
+    assert daemon.socket.frames == []
+    daemon = ready_to_flash()
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    frames = len(daemon.socket.frames)
+    daemon.command('{"cmd":"eq","value":"treble"}')
+    assert len(daemon.socket.frames) == frames
+
+
+def test_eq_follows_the_ack_not_the_click():
+    daemon = eq_daemon()
+    daemon.state["eq"] = "off"
+    daemon.command('{"cmd":"eq","value":"bass"}')
+    assert daemon.state["eq"] == "off", "no guessing before the earbuds answer"
+    daemon.handle(gb.MSG_ACK, bytes([gb.MSG_EQUALIZER, 1]))
+    assert daemon.state["eq"] == "bass"
+    # The earbuds' answer wins over what was asked for.
+    daemon.command('{"cmd":"eq","value":"treble"}')
+    daemon.handle(gb.MSG_ACK, bytes([gb.MSG_EQUALIZER, 4]))
+    assert daemon.state["eq"] == "clear"
+    # An empty ack changes nothing.
+    daemon.handle(gb.MSG_ACK, bytes([gb.MSG_EQUALIZER]))
+    assert daemon.state["eq"] == "clear"
+
+
+def test_eq_ack_is_the_applied_preset_on_buds4_too():
+    # Unlike their noise control ack, Buds4 models answer EQ with the value.
+    daemon = eq_daemon("buds4pro")
+    daemon.command('{"cmd":"eq","value":"soft"}')
+    daemon.handle_ack(gb.MSG_EQUALIZER, bytes([0]))
+    assert daemon.state["eq"] == "off"
+    # A dropped link forgets a request that was never answered.
+    daemon.command('{"cmd":"eq","value":"bass"}')
+    assert daemon.eq_requested == "bass"
+    daemon.disconnect()
+    assert daemon.eq_requested is None
+
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):

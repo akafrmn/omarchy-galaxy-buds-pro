@@ -44,6 +44,7 @@ MSG_NOISE_CONTROLS = 120
 MSG_SET_SPATIAL_AUDIO = 124
 MSG_SET_AMBIENT_MODE = 128
 MSG_AMBIENT_MODE_UPDATED = 129
+MSG_EQUALIZER = 134
 MSG_LOCK_TOUCHPAD = 144
 MSG_SET_NOISE_REDUCTION = 152
 MSG_NOISE_REDUCTION_MODE_UPDATE = 155
@@ -67,6 +68,15 @@ PROFILE_GONE_ERRORS = ("profile-unavailable", "InvalidArguments", "ServiceUnknow
 MODES = {"off": 0, "anc": 1, "ambient": 2}
 MODE_NAMES = {v: k for k, v in MODES.items()}
 
+# Equalizer presets as the EQUALIZER message and the extended status carry
+# them. 6 is the custom curve another app (Galaxy Wearable) set: shown, never
+# sent, since its bands live in that app. Captured on a Buds3 Pro, and what
+# NebulaBuds and OtoControl decode; GalaxyBudsClient says 7, from one
+# uncaptured Buds4 Pro change. Anything else reads "unknown", not a guess.
+EQ_PRESETS = {"off": 0, "bass": 1, "soft": 2, "dynamic": 3, "clear": 4, "treble": 5}
+EQ_CUSTOM = 6
+EQ_NAMES = {**{v: k for k, v in EQ_PRESETS.items()}, EQ_CUSTOM: "custom"}
+
 # What actually differs between models. Everything else -- framing, CRC, the
 # commands, the battery messages -- is shared, so adding a model is a row here.
 #
@@ -77,6 +87,8 @@ MODE_NAMES = {v: k for k, v in MODES.items()}
 #   touch:    (shape, offset); "bits7" models send seven booleans back
 #   seamless: (offset, first firmware revision that reports it)
 #   spatial:  same, or None when the model has no 360 Audio
+#   eq:       same, for the equalizer preset; None where it is not read (the
+#             original Buds use another encoding)
 #
 # Order matters: name matching walks this list, so "Buds2 Pro" has to come
 # before "Buds2".
@@ -84,52 +96,52 @@ PROFILES = [
     {"name": "buds", "ids": (257, 14336), "match": ("Galaxy Buds (",),
      "uuid": SPP_LEGACY, "fw_model": "Buds", "legacy_frame": True, "wearing": "legacy", "case_battery": False,
      "modes": ("off", "ambient"), "noise": ("ambient", 7), "touch": ("byte", 12),
-     "seamless": None, "spatial": None},
+     "seamless": None, "spatial": None, "eq": None},
 
     {"name": "budsplus", "ids": tuple(range(258, 267)), "match": ("Galaxy Buds+ (", "Buds+"),
      "uuid": SPP_STANDARD, "fw_model": "BudsPlus",
      "modes": ("off", "ambient"), "noise": ("ambient", 8), "touch": ("byte", 12),
-     "seamless": (21, 11), "spatial": None},
+     "seamless": (21, 11), "spatial": None, "eq": (11, 0)},
 
     {"name": "budslive", "ids": tuple(range(278, 285)), "match": ("Buds Live",),
      "uuid": SPP_STANDARD, "fw_model": "BudsLive",
      "modes": ("off", "anc"), "noise": ("anc", 12), "touch": ("byte", 10),
-     "seamless": (19, 0), "spatial": (24, 9)},
+     "seamless": (19, 0), "spatial": (24, 9), "eq": (9, 0)},
 
     {"name": "budspro", "ids": tuple(range(298, 302)), "match": ("Buds Pro",),
      "uuid": SPP_STANDARD, "fw_model": "BudsPro",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("byte", 10),
-     "seamless": (19, 0), "spatial": (28, 2)},
+     "seamless": (19, 0), "spatial": (28, 2), "eq": (9, 0)},
 
     {"name": "buds2pro", "charging": True, "ids": tuple(range(325, 329)), "match": ("Buds2 Pro",),
      "uuid": SPP_NEW, "fw_model": "Buds2Pro",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "spatial": (35, 1)},
+     "seamless": (19, 0), "spatial": (35, 1), "eq": (9, 0)},
 
     {"name": "buds2", "charging": True, "ids": tuple(range(313, 322)) + (14337,), "match": ("Buds2",),
      "uuid": SPP_NEW, "fw_model": "Buds2",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "spatial": (35, 8)},
+     "seamless": (19, 0), "spatial": (35, 8), "eq": (9, 0)},
 
     {"name": "budscore", "charging": True, "ids": (322, 323), "match": ("Buds Core",),
      "uuid": SPP_NEW, "fw_model": "BudsCore",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": None},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": None, "eq": (9, 0)},
 
     {"name": "budsfe", "charging": True, "ids": (330, 331), "match": ("Buds FE",),
      "uuid": SPP_NEW, "fw_model": "BudsFe",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0), "eq": (9, 0)},
 
     {"name": "buds3pro", "charging": True, "ids": (340, 341), "match": ("Buds3 Pro",),
      "uuid": SPP_NEW, "fw_model": "Buds3Pro",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0), "eq": (9, 0)},
 
     {"name": "buds3fe", "charging": True, "ids": (347, 348), "match": ("Buds3 FE",),
      "uuid": SPP_NEW, "fw_model": "Buds3Fe",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": None},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": None, "eq": (9, 0)},
 
     # Buds4 generation (2026): same layout as Buds3 Pro per GalaxyBudsClient's
     # decoder and live Buds4 Pro captures in hmarquez-solutions/omarchy-buds.
@@ -137,29 +149,30 @@ PROFILES = [
     {"name": "buds4pro", "charging": True, "ids": (359, 360, 361), "match": ("Buds4 Pro",),
      "uuid": SPP_NEW, "fw_model": "Buds4Pro", "noise_ack_receipt": True,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0), "eq": (9, 0)},
 
     {"name": "buds4", "charging": True, "ids": (355, 356), "match": ("Buds4",),
      "uuid": SPP_NEW, "fw_model": "Buds4", "noise_ack_receipt": True,
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0), "eq": (9, 0)},
 
     {"name": "buds3", "charging": True, "ids": (333, 334), "match": ("Buds3",),
      "uuid": SPP_NEW, "fw_model": "Buds3",
      "modes": ("off", "anc", "ambient"), "noise": ("controls", 12), "touch": ("bits7", 10),
-     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0)},
+     "seamless": (19, 0), "one_bud_noise": (28, 0), "spatial": (35, 0), "eq": (9, 0)},
 ]
 
 # Anything newer than this file knows about: the noise byte and the touch
 # bitmask have sat still since Buds Live, so those still work. 360 Audio moved
-# around between models, so it is hidden rather than read from the wrong byte.
+# around between models, so it is hidden rather than read from the wrong byte;
+# the equalizer too, since a preset sent to an unknown model is a guess.
 UNKNOWN_PROFILE = {"name": "unknown", "ids": (), "match": (), "uuid": SPP_NEW, "charging": True,
                    "modes": ("off", "anc", "ambient"), "noise": ("controls", 12),
-                   "touch": ("bits7", 10), "seamless": (19, 0), "spatial": None}
+                   "touch": ("bits7", 10), "seamless": (19, 0), "spatial": None, "eq": None}
 
 DEFAULTS = {"legacy_frame": False, "wearing": "nibbles", "case_battery": True,
             "charging": False, "noise_ack_receipt": False, "one_bud_noise": None,
-            "fw_model": None}
+            "fw_model": None, "eq": None}
 
 
 def profile_get(profile, key):
@@ -341,6 +354,12 @@ def noise_command(kind, mode):
     return MSG_NOISE_CONTROLS, bytes([MODES.get(mode, 0)])
 
 
+def read_eq(byte):
+    """Preset name, "custom", or "unknown" for a value this file does not know.
+    Unknown still keeps the control: the presets can be sent either way."""
+    return EQ_NAMES.get(byte, "unknown")
+
+
 def optional_field(payload, spec, revision):
     """Read a field the model only reports from some firmware revision on."""
     if not spec:
@@ -379,6 +398,9 @@ def parse_extended_status(payload, profile):
     one_bud = optional_field(payload, profile_get(profile, "one_bud_noise"), revision)
     if one_bud is not None:
         state["one_bud_noise"] = one_bud == 1
+    eq = optional_field(payload, profile_get(profile, "eq"), revision)
+    if eq is not None:
+        state["eq"] = read_eq(eq)
     return state
 
 
@@ -832,6 +854,8 @@ class Daemon:
         self.registered = False
         self.default_address = ""
         self.codec_card = ""
+        # The preset last asked for, until the earbuds ack it.
+        self.eq_requested = None
         # Firmware update check: off until the service passes the setting on,
         # so a user who disabled it never touches the network.
         self.firmware_check = False
@@ -1009,6 +1033,7 @@ class Daemon:
         self.socket = None
         self.buffer = b""
         self.connecting = False
+        self.eq_requested = None
         self.update({"connected": False, "reason": "disconnected"})
         self.flash_on_disconnect()
 
@@ -1412,6 +1437,11 @@ class Daemon:
             touch = dict(self.state.get("touch", {}))
             touch["enabled"] = params[0] == 1
             self.update({"touch": touch})
+        elif acked == MSG_EQUALIZER and profile_get(self.profile, "eq"):
+            # The applied preset on every model, Buds4 included (unlike its
+            # noise control ack).
+            self.eq_requested = None
+            self.update({"eq": read_eq(params[0])})
 
     def send(self, msg_id, payload=b""):
         if not self.socket:
@@ -1473,6 +1503,10 @@ class Daemon:
         elif name == "seamless" and self.profile["seamless"]:
             # Inverted on the wire: 0 enables it.
             self.send(MSG_SET_SEAMLESS_CONNECTION, bytes([0 if value else 1]))
+        elif name == "eq" and profile_get(self.profile, "eq") and isinstance(value, str) and value in EQ_PRESETS:
+            # The panel follows the ack, not this request.
+            self.eq_requested = value
+            self.send(MSG_EQUALIZER, bytes([EQ_PRESETS[value]]))
         elif name == "codec" and value:
             card = (self.state.get("codec") or {}).get("card")
             if card:
