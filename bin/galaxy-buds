@@ -14,6 +14,7 @@ Needs the system python: dbus-python and PyGObject live there, not in brew's.
 import json
 import os
 import re
+import signal
 import struct
 import subprocess
 import sys
@@ -48,6 +49,12 @@ MSG_EQUALIZER = 134
 MSG_LOCK_TOUCHPAD = 144
 MSG_SET_NOISE_REDUCTION = 152
 MSG_NOISE_REDUCTION_MODE_UPDATE = 155
+# Find My Earbuds. 166 (FIND_MY_EARBUDS_ON_WEARING_START, ring while worn) is
+# deliberately never sent.
+MSG_FIND_START = 160
+MSG_FIND_STOP = 161            # we send it to stop; the earbuds send it when they stop
+MSG_MUTE_EARBUD = 162          # [left, right], 1 = muted
+MSG_MUTE_EARBUD_UPDATED = 163  # [left, right] from the earbuds; never echoed back
 MSG_SET_SEAMLESS_CONNECTION = 175
 MSG_VERSION_INFO_LONG = 104
 MSG_FOTA_RESULT = 185
@@ -170,9 +177,11 @@ UNKNOWN_PROFILE = {"name": "unknown", "ids": (), "match": (), "uuid": SPP_NEW, "
                    "modes": ("off", "anc", "ambient"), "noise": ("controls", 12),
                    "touch": ("bits7", 10), "seamless": (19, 0), "spatial": None, "eq": None}
 
+# "find": Find My Earbuds (160-163). GalaxyBudsClient offers it on every
+# model, so it defaults on; a row sets False if a model turns out not to.
 DEFAULTS = {"legacy_frame": False, "wearing": "nibbles", "case_battery": True,
             "charging": False, "noise_ack_receipt": False, "one_bud_noise": None,
-            "fw_model": None, "eq": None}
+            "fw_model": None, "eq": None, "find": True}
 
 
 def profile_get(profile, key):
@@ -718,6 +727,49 @@ def lock_payload(shape, enabled, touch):
                  + [int(touch.get("double_call", False)), int(touch.get("hold_call", False))])
 
 
+# ---- find my earbuds -----------------------------------------------------
+# 160 starts the search: the earbuds chirp quietly at once and ramp into a loud
+# melody after about 3 s. Stricter than GalaxyBudsClient on purpose: a bud in
+# someone's ear is muted the moment the search starts, and the whole search
+# stops if the earbuds don't confirm that mute in time; it always ends by
+# itself, and on every way the helper or the link can go away.
+FIND_TIMEOUT = 90          # seconds until the helper stops the search itself
+FIND_MUTE_CONFIRM = 2      # seconds the earbuds get to confirm a safety mute
+FIND_TICK_MS = 250         # watchdog period while a search runs
+SIDES = ("left", "right")
+# Placements known to be out of an ear. Anything else -- worn, an unknown
+# nibble, or no report at all yet -- is treated as possibly in an ear.
+FIND_OUT_OF_EAR = ("idle", "case", "disconnected")
+
+
+def find_idle():
+    return {"active": False, "muted": {"left": False, "right": False}}
+
+
+def find_must_mute(placement):
+    """{side: True} for every bud that may be in an ear and must not ring."""
+    placement = placement or {}
+    return {side: placement.get(side) not in FIND_OUT_OF_EAR for side in SIDES}
+
+
+def find_refusal(placement):
+    """Why a search must not start with the buds where they are, or None."""
+    placement = placement or {}
+    must = find_must_mute(placement)
+    if all(must.values()):
+        if all(placement.get(side) == "wearing" for side in SIDES):
+            return "Both earbuds are in your ears. Take at least one out first."
+        return "The earbuds have not said yet whether they are in your ears. Try again in a moment."
+    if not any(not must[side] and placement.get(side) != "disconnected" for side in SIDES):
+        return ("Neither earbud can ring right now: a bud in your ear stays muted, "
+                "and one that is not connected can't play a sound.")
+    return None
+
+
+def mute_payload(mask):
+    return bytes([1 if mask.get("left") else 0, 1 if mask.get("right") else 0])
+
+
 def pactl(*args):
     """pactl or nothing: no PipeWire means no codec section, not a crash."""
     try:
@@ -875,6 +927,12 @@ class Daemon:
         self.update_result = None
         self.update_checked_at = None
         self.fetch_release = fetch_latest_release
+        # Find My Earbuds in progress, or None: {"deadline", "want", "confirm_by"}
+        # on self.clock. `schedule(ms, job)` runs the watchdog while it lasts;
+        # run() points it at GLib, tests drive find_watchdog() by hand.
+        self.find = None
+        self.find_ticking = False
+        self.schedule = lambda ms, job: None
 
     # ---- output ----------------------------------------------------------
     def emit(self):
@@ -940,6 +998,11 @@ class Daemon:
         self.device_path = path
         self.state["model"] = profile["name"]
         self.state["modes"] = list(profile["modes"])
+        # Present means the model can ring; the panel hides the section otherwise.
+        if profile_get(profile, "find"):
+            self.state["find"] = find_idle()
+        else:
+            self.state.pop("find", None)
         self.state["name"] = name
         self.state["address"] = str(device.get("Address", "")).upper()
 
@@ -961,7 +1024,9 @@ class Daemon:
         if self.should_retarget():
             # Switching the audio output to the other pair is how you say which
             # pair you mean. Hand the link over instead of staying on the one
-            # that happened to connect first.
+            # that happened to connect first -- after telling this pair to
+            # stop ringing, while the link still works.
+            self.find_stop()
             self.disconnect()
             self.connect()
             return True
@@ -1034,6 +1099,11 @@ class Daemon:
         self.buffer = b""
         self.connecting = False
         self.eq_requested = None
+        # The link is gone, so there is nothing to send a stop over: forget
+        # the search. Deliberate hand-overs send the stop before calling this.
+        self.find = None
+        if "find" in self.state:
+            self.state["find"] = find_idle()
         self.update({"connected": False, "reason": "disconnected"})
         self.flash_on_disconnect()
 
@@ -1067,8 +1137,14 @@ class Daemon:
         try:
             if msg_id == MSG_EXTENDED_STATUS:
                 self.update(parse_extended_status(payload, self.profile))
+                self.find_check_placement()
             elif msg_id == MSG_STATUS:
                 self.update(parse_status(payload, self.profile))
+                self.find_check_placement()
+            elif msg_id == MSG_FIND_STOP:
+                self.find_ended()
+            elif msg_id == MSG_MUTE_EARBUD_UPDATED:
+                self.find_report(payload[0], payload[1])
             elif msg_id == MSG_NOISE_CONTROLS_UPDATE:
                 self.update({"noise": read_noise(payload[0], "controls")})
             elif msg_id == MSG_AMBIENT_MODE_UPDATED and kind == "ambient":
@@ -1242,6 +1318,9 @@ class Daemon:
         if reasons:
             self.update({"firmware_install": {"stage": "refused", "target": target, "reasons": reasons}})
             return
+        # Nothing else may talk to the earbuds during an install, a search included.
+        if self.find:
+            self.find_stop("Stopped: a firmware update is starting.")
         self.flash = {"target": target, "stage": "downloading", "image": None, "mtu": 0, "segment": None}
         self.update({"firmware_install": {"stage": "downloading", "target": target, "percent": 0}})
         self.flash_deadline(FLASH_REBOOT_TIMEOUT)
@@ -1442,6 +1521,9 @@ class Daemon:
             # noise control ack).
             self.eq_requested = None
             self.update({"eq": read_eq(params[0])})
+        elif acked == MSG_MUTE_EARBUD and len(params) >= 2:
+            # The ack carries the mute the earbuds applied, like 163 does.
+            self.find_report(params[0], params[1])
 
     def send(self, msg_id, payload=b""):
         if not self.socket:
@@ -1452,6 +1534,129 @@ class Daemon:
             self.socket.sendall(encode(msg_id, payload, profile_get(self.profile, "legacy_frame")))
         except OSError:
             self.disconnect()
+
+    # ---- find my earbuds -------------------------------------------------
+    def find_start(self):
+        if self.find:
+            return
+        placement = self.state.get("placement") or {}
+        if not (self.socket and self.state.get("connected")):
+            reason = "The earbuds are not connected."
+        elif not profile_get(self.profile, "find"):
+            reason = "This model can't ring from here."
+        elif self.flash:
+            reason = "Not while a firmware update is running."
+        else:
+            reason = find_refusal(placement)
+        if reason:
+            self.update({"find": dict(find_idle(), reason=reason)})
+            return
+        must = find_must_mute(placement)
+        self.find = {"deadline": self.clock() + FIND_TIMEOUT, "want": must, "confirm_by": None}
+        self.state["find"] = dict(find_idle(), active=True, until=int(time.time()) + FIND_TIMEOUT)
+        # Start, then mute the bud in an ear straight away: the quiet chirps
+        # start at once, the loud melody only after about 3 s, and the mute
+        # has to be confirmed well before that or the search is stopped.
+        self.send(MSG_FIND_START)
+        if self.find and any(must.values()):
+            self.find_send_mute(must, confirm=True)
+        if self.find:   # a failed send drops the link, and the search with it
+            self.emit()
+            self.find_schedule()
+
+    def find_send_mute(self, mask, confirm=False):
+        self.send(MSG_MUTE_EARBUD, mute_payload(mask))
+        if confirm and self.find:
+            self.find["confirm_by"] = self.clock() + FIND_MUTE_CONFIRM
+
+    def find_mute(self, value):
+        """The user's mute toggles. A bud that may be in an ear stays muted
+        whatever is asked. Nothing is assumed until the earbuds report back."""
+        if not self.find:
+            return
+        value = value if isinstance(value, dict) else {}
+        must = find_must_mute(self.state.get("placement"))
+        self.find_send_mute({side: value.get(side) is True or must[side] for side in SIDES})
+
+    def find_stop(self, reason=None):
+        """Stop a running search (sending 161 while the link is up) and clear
+        any earlier message. Safe to call at any time."""
+        if self.find:
+            self.find = None
+            self.send(MSG_FIND_STOP)
+        idle = find_idle()
+        if reason:
+            idle["reason"] = reason
+        if ("find" in self.state or reason) and self.state.get("find") != idle:
+            self.update({"find": idle})
+
+    def find_ended(self):
+        """The earbuds stopped searching on their own (161 from them)."""
+        if self.find:
+            self.find = None
+            self.update({"find": find_idle()})
+
+    def find_report(self, left, right):
+        """Mute state from the earbuds (163, or the ack of our 162). Shown and
+        checked, never sent back: echoing it is how a client loops forever."""
+        if not self.find:
+            return
+        muted = {"left": bool(left), "right": bool(right)}
+        safe = all(muted[side] for side in SIDES if self.find["want"][side])
+        if self.find["confirm_by"] is not None:
+            # A report that doesn't match yet may predate our mute; the
+            # watchdog decides if the right one never comes.
+            if safe:
+                self.find["confirm_by"] = None
+        elif not safe:
+            self.find_stop("Stopped: the earbuds unmuted the bud in your ear.")
+            return
+        self.update({"find": dict(self.state.get("find") or find_idle(), muted=muted)})
+
+    def find_check_placement(self):
+        """A bud went into an ear mid-search: mute it now, or stop when there
+        is no bud left out of an ear."""
+        if not self.find:
+            return
+        placement = self.state.get("placement") or {}
+        must = find_must_mute(placement)
+        if all(must.values()):
+            self.find_stop("Stopped: both earbuds are in your ears.")
+            return
+        added = [side for side in SIDES if must[side] and not self.find["want"][side]]
+        self.find["want"] = must
+        if added:
+            muted = (self.state.get("find") or {}).get("muted") or {}
+            self.find_send_mute({side: must[side] or muted.get(side) is True for side in SIDES}, confirm=True)
+
+    def find_watchdog(self):
+        """Runs while a search is on; False once it is over (ends the timer)."""
+        if not self.find:
+            return False
+        now = self.clock()
+        if self.find["confirm_by"] is not None and now >= self.find["confirm_by"]:
+            self.find_stop("Stopped: the earbuds did not confirm muting the bud in your ear.")
+        elif now >= self.find["deadline"]:
+            self.find_stop(f"Stopped by itself after {FIND_TIMEOUT} s.")
+        return self.find is not None
+
+    def find_schedule(self):
+        if not self.find_ticking:
+            self.find_ticking = True
+            self.schedule(FIND_TICK_MS, self.find_tick)
+
+    def find_tick(self):
+        keep = self.find_watchdog()
+        if not keep:
+            self.find_ticking = False
+        return keep
+
+    def shutdown(self):
+        """The shell closed our stdin or sent a signal: stop any search while
+        the link is still up, then leave."""
+        self.find_stop()
+        self.loop.quit()
+        return False
 
     # ---- commands --------------------------------------------------------
     def command(self, line):
@@ -1482,6 +1687,17 @@ class Daemon:
                 self.check_plugin_update()
             else:
                 self.set_plugin({"status": "off"})
+            return
+        # Ahead of the firmware guard so a refusal can say why; find_start
+        # refuses itself during an install, and a search never runs then.
+        if name == "find_start":
+            self.find_start()
+            return
+        if name == "find_stop":
+            self.find_stop()
+            return
+        if name == "find_mute":
+            self.find_mute(value)
             return
         # Nothing else may talk to the earbuds while they take a firmware image.
         if self.flash and name != "refresh":
@@ -1531,8 +1747,7 @@ class Daemon:
         except BlockingIOError:
             return True
         if not chunk:
-            self.loop.quit()
-            return False
+            return self.shutdown()
         self.stdin_buffer += chunk
         while b"\n" in self.stdin_buffer:
             line, self.stdin_buffer = self.stdin_buffer.split(b"\n", 1)
@@ -1626,6 +1841,17 @@ class Daemon:
                           GLib.IOCondition.IN | GLib.IOCondition.HUP, self.on_stdin)
         # The lookup runs on a worker thread; its result joins the main loop.
         self.defer = lambda job: GLib.idle_add(job)
+        self.schedule = lambda ms, job: GLib.timeout_add(ms, job)
+        # Being told to go must not leave the earbuds ringing.
+        try:
+            import gi
+            gi.require_version("GLibUnix", "2.0")
+            from gi.repository import GLibUnix
+            signal_add = GLibUnix.signal_add
+        except (ImportError, ValueError):   # GLib before 2.80
+            signal_add = GLib.unix_signal_add
+        for number in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            signal_add(GLib.PRIORITY_HIGH, number, self.shutdown)
         GLib.timeout_add_seconds(3600, self.check_firmware)
         GLib.timeout_add_seconds(3600, self.check_plugin_update)
         GLib.timeout_add_seconds(2, self.flash_watchdog)

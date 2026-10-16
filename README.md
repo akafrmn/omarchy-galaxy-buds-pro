@@ -132,6 +132,7 @@ bind = SUPER SHIFT, N, exec, omarchy-shell io.github.akafrmn.galaxy-buds-pro set
 | `testLowBattery` | Fire the low battery check now |
 | `firmwareInstall <build>` | Install the offered update; the exact build is the confirmation |
 | `firmwareCancel` / `firmwareDismiss` | Stop an install before the earbuds start installing / clear the result |
+| `find` / `findStop` | Ring the earbuds (loud; see [Find earbuds](#find-earbuds)) / stop |
 
 ## Settings
 
@@ -183,6 +184,11 @@ Every key is optional. Anything you leave out keeps its English text.
 | `fwLatest` / `fwChecked` / `fwChecking` / `fwUnknown` | Latest version / checked / Checking… / Couldn't check for updates |
 | `fwOf` / `fwAbout` / `fwLeft` | of / about / left (as in `2.7 of 8.3 MB · about 20 s left`) |
 | `firmwareMismatch` | Left and right run different firmware; updates can fail until they match. |
+| `find` / `findRing` / `findStop` | Find earbuds / Ring earbuds / Stop |
+| `findWarning` | Plays a loud sound. Take them out of your ears. |
+| `findMuteLeft` / `findMuteRight` | Left / Right (the mute toggles, also used as `%1` below) |
+| `findWorn` / `findOffline` | %1 bud is in your ear — muted / %1 bud is not connected and can't ring. |
+| `findAutoStop` | Stops by itself in %1 s |
 
 ## Battery
 
@@ -241,6 +247,35 @@ best codec both ends support, and the header shows what it picked
 While something holds the microphone, PipeWire switches the card to a headset
 profile and the row offers the call codecs instead (LC3-SWB, mSBC, CVSD),
 marked with a mic glyph. PipeWire switches back when the mic is released.
+
+## Find earbuds
+
+**Ring earbuds** makes the earbuds play Samsung's Find My Earbuds sound so you
+can find them, and on Buds3 Pro lights the blades. It starts with quiet chirps
+and turns into a **loud** melody after about 3 seconds, so take them out of your
+ears first. While it rings the panel shows **Stop**, a mute toggle per bud
+(**Left** / **Right**), and when it stops by itself.
+
+The safeguards live in the helper, not the panel, and are stricter than
+GalaxyBudsClient's:
+
+- A bud that reads as in your ear (or hasn't said where it is yet) is muted
+  the moment the search starts and can't be unmuted. If the earbuds don't
+  confirm that mute within 2 seconds, the search is stopped.
+- A bud that goes into your ear during a search is muted the same way; if
+  both end up in your ears, the search stops.
+- With both buds in your ears, or none able to ring, it doesn't start and
+  says why. A bud that has dropped off the link can't ring, and the panel
+  says so.
+- It stops by itself after 90 seconds, and whenever you press Stop, close the
+  panel, the shell stops the helper, or a firmware install starts. If the
+  link drops there is nothing left to stop, and the panel forgets the search.
+  It can't be started during a firmware install.
+- It never uses Samsung's "ring while wearing" command (166) and never sends
+  the earbuds' mute report back to them.
+
+From a keybind: `omarchy-shell io.github.akafrmn.galaxy-buds-pro find`, and
+`findStop` to stop.
 
 ## Firmware
 

@@ -63,6 +63,66 @@ Panel {
   // is the one sound is actually going to.
   readonly property bool isAudioOutput: buds.is_default_output === true
 
+  // ---- Find My Earbuds ----------------------------------------------------
+  // The helper only reports "find" for models that can ring. Every safeguard
+  // lives there: a worn bud is muted (or the search refused), the search ends
+  // by itself after 90 s, and on exit, link loss or a firmware install.
+  readonly property var findState: buds.find || null
+  readonly property bool findVisible: connected && findState !== null
+  readonly property bool findActive: findState !== null && findState.active === true
+  readonly property var findMuted: findState && findState.muted ? findState.muted : ({})
+  // Wall clock for the countdown; only ticks while it is on screen.
+  property real nowSecs: Date.now() / 1000
+  readonly property int findRemaining: findActive
+    ? Math.max(0, Math.ceil(Number(findState.until || 0) - nowSecs)) : 0
+  function findSideName(side) {
+    return side === "left" ? t("findMuteLeft", "Left") : t("findMuteRight", "Right")
+  }
+  // Placement facts the panel can say itself; the helper's `reason` covers
+  // refusals and why a search stopped.
+  readonly property var findNotes: {
+    var notes = []
+    if (!findVisible) return notes
+    var sides = ["left", "right"]
+    for (var i = 0; i < sides.length; i++) {
+      var where = String(placement[sides[i]] || "")
+      if (findActive && where === "wearing")
+        notes.push(t("findWorn", "%1 bud is in your ear — muted").replace("%1", findSideName(sides[i])))
+      else if (where === "disconnected")
+        notes.push(t("findOffline", "%1 bud is not connected and can't ring.").replace("%1", findSideName(sides[i])))
+    }
+    return notes
+  }
+  // One keyboard row: Ring when idle; Stop, Left, Right while it rings.
+  readonly property var findActions: findActive
+    ? [{value: "stop"}, {value: "left"}, {value: "right"}]
+    : [{value: "ring"}]
+  function findAction(value) {
+    if (!service) return
+    if (value === "ring") service.findStart()
+    else if (value === "stop") service.findStop()
+    else if (value === "left") service.findMute(findMuted.left !== true, findMuted.right === true)
+    else if (value === "right") service.findMute(findMuted.left === true, findMuted.right !== true)
+  }
+  function findHasCursor(index) {
+    var row = focusedRow()
+    return row !== null && row.type === "find" && groupIndex === index
+  }
+
+  // The action list changes length when a search starts or ends.
+  onFindActiveChanged: {
+    var row = focusedRow()
+    if (row && row.type === "find") groupIndex = 0
+  }
+
+  Timer {
+    interval: 1000
+    repeat: true
+    triggeredOnStart: true
+    running: root.findActive && root.opened
+    onTriggered: root.nowSecs = Date.now() / 1000
+  }
+
   // ---- First-time pairing: scan for earbuds sitting in an open case ----
   // The Python helper only ever looks for a pair BlueZ already knows about
   // (see bin/galaxy-buds' find_device), so getting brand-new earbuds paired
@@ -180,6 +240,8 @@ Panel {
     connecting = false
     connectTimeoutTimer.stop()
     everSearched = false
+    // Closing the panel ends a search (and clears its last message).
+    if (findState !== null && service) service.findStop()
   }
 
   Timer {
@@ -255,6 +317,7 @@ Panel {
       for (var r = 0; r < eqRows.length; r++)
         rows.push({type: "eq", index: r})
     if (codecOptions.length > 1) rows.push({type: "codec"})
+    if (findVisible) rows.push({type: "find"})
     return rows
   }
   readonly property int cursorCount: focusableRows.length
@@ -429,21 +492,24 @@ Panel {
   }
 
   function isChipRow(row) {
-    return !!row && (row.type === "modes" || row.type === "eq" || row.type === "codec")
+    return !!row && (row.type === "modes" || row.type === "eq" || row.type === "codec" || row.type === "find")
   }
 
   function groupOptions(row) {
     if (!row) return []
     if (row.type === "modes") return root.modeOptions
     if (row.type === "eq") return root.eqRows[row.index] || []
+    if (row.type === "find") return root.findActions
     return root.codecOptions
   }
 
   // Index of the chip that is on in a chip row, or -1 (the active preset can
   // sit in the other equalizer row, or be custom and have no chip at all).
+  // The find row's buttons are actions, none of them "on": start at the first.
   function selectedGroupIndex(row) {
     if (row.type === "modes") return modeGroup.selectedOptionIndex()
     if (row.type === "codec") return codecGroup.selectedOptionIndex()
+    if (row.type === "find") return 0
     var opts = groupOptions(row)
     for (var i = 0; i < opts.length; i++)
       if (optionValue(opts[i]) === root.eq) return i
@@ -501,6 +567,9 @@ Panel {
     } else if (row.type === "codec") {
       var codec = root.codecOptions[groupIndex]
       if (codec !== undefined && codec !== null) setCodec(optionValue(codec))
+    } else if (row.type === "find") {
+      var action = root.findActions[groupIndex]
+      if (action) findAction(action.value)
     }
   }
 
@@ -814,6 +883,142 @@ Panel {
               root.selectCursor(root.rowIndexFor("codec"))
               root.groupIndex = index
             }
+          }
+        }
+
+        // ---------- Find earbuds: ring them, mute a bud, stop ----------
+        PanelSectionHeader {
+          width: parent.width
+          text: root.t("find", "Find earbuds")
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          visible: root.findVisible
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(6)
+          visible: root.findVisible
+
+          Button {
+            visible: !root.findActive
+            text: root.t("findRing", "Ring earbuds")
+            iconText: "󰓃"
+            bordered: true
+            hasCursor: root.findHasCursor(0)
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            onClicked: {
+              root.selectCursor(root.rowIndexFor("find"))
+              root.findAction("ring")
+            }
+            onHovered: function(isHovered) {
+              if (isHovered) {
+                root.selectCursor(root.rowIndexFor("find"))
+                root.groupIndex = 0
+              }
+            }
+          }
+
+          Row {
+            visible: root.findActive
+            spacing: Style.space(8)
+
+            Button {
+              text: root.t("findStop", "Stop")
+              bordered: true
+              hasCursor: root.findHasCursor(0)
+              foreground: root.urgent
+              fontFamily: root.fontFamily
+              fontSize: Style.font.caption
+              onClicked: {
+                root.selectCursor(root.rowIndexFor("find"))
+                root.findAction("stop")
+              }
+              onHovered: function(isHovered) {
+                if (isHovered) {
+                  root.selectCursor(root.rowIndexFor("find"))
+                  root.groupIndex = 0
+                }
+              }
+            }
+
+            // Mute toggles, lit while the earbuds report that bud muted. A
+            // bud in an ear stays muted whatever is clicked.
+            Repeater {
+              model: ["left", "right"]
+
+              Button {
+                required property var modelData
+                required property int index
+                text: root.findSideName(modelData)
+                iconText: root.findMuted[modelData] === true ? "󰝟" : "󰕾"
+                selected: root.findMuted[modelData] === true
+                // Same rule as the helper: only a bud known to be out of an ear can be unmuted.
+                enabled: ["idle", "case", "disconnected"].indexOf(String(root.placement[modelData] || "")) >= 0
+                opacity: enabled ? 1.0 : 0.5
+                bordered: true
+                hasCursor: root.findHasCursor(index + 1)
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                onClicked: {
+                  root.selectCursor(root.rowIndexFor("find"))
+                  root.groupIndex = index + 1
+                  root.findAction(modelData)
+                }
+                onHovered: function(isHovered) {
+                  if (isHovered) {
+                    root.selectCursor(root.rowIndexFor("find"))
+                    root.groupIndex = index + 1
+                  }
+                }
+              }
+            }
+          }
+
+          Text {
+            width: parent.width
+            visible: !root.findActive
+            text: root.t("findWarning", "Plays a loud sound. Take them out of your ears.")
+            color: root.dim
+            wrapMode: Text.WordWrap
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            width: parent.width
+            visible: root.findActive
+            text: root.t("findAutoStop", "Stops by itself in %1 s").replace("%1", root.findRemaining)
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Repeater {
+            model: root.findNotes
+
+            Text {
+              required property var modelData
+              width: panelColumn.width
+              text: modelData
+              color: root.dim
+              wrapMode: Text.WordWrap
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          Text {
+            width: parent.width
+            visible: text !== ""
+            text: root.findState && root.findState.reason ? String(root.findState.reason) : ""
+            color: root.urgent
+            wrapMode: Text.WordWrap
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
           }
         }
 

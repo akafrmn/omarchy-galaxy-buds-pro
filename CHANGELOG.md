@@ -16,6 +16,17 @@ All notable changes to this project are documented here. The format follows
   model, hidden on the original Buds and unrecognised models. New IPC method `eq <preset>` and labels `eq`,
   `eqOff`, `eqBass`, `eqSoft`, `eqDynamic`, `eqClear`, `eqTreble`, `eqCustom`
   ([#3](https://github.com/akafrmn/omarchy-galaxy-buds-pro/issues/3)).
+- **Find earbuds**: a new panel section (after Codec) rings the earbuds so you can find them,
+  with per-bud mute toggles, a Stop button and a countdown
+  ([#4](https://github.com/akafrmn/omarchy-galaxy-buds-pro/issues/4)). Safer than
+  GalaxyBudsClient: a bud in your ear is muted the moment the search starts, and the search stops
+  if the earbuds don't confirm that within 2 s; a bud that goes into your ear mid-search is muted
+  too; it refuses to start with both buds in; it stops by itself after 90 s and on Stop, panel
+  close, helper exit (stdin closed or a signal), audio hand-over to another pair and firmware
+  install start, and forgets the search when the link drops. Never uses "ring while wearing"
+  (166) and never echoes the earbuds' mute report. New IPC methods `find` and `findStop`; new
+  labels `find`, `findRing`, `findStop`, `findWarning`, `findMuteLeft`, `findMuteRight`,
+  `findWorn`, `findOffline`, `findAutoStop`.
 
 ## [2.5.0] - 2026-10-16
 
