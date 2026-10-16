@@ -339,6 +339,14 @@ Panel {
                                                  || (service && service.manifest ? service.manifest.version : "")
                                                  || "")
   readonly property bool pluginUpdate: pluginInfo.status === "available"
+  readonly property bool pluginLinkable: pluginUpdate
+                                         && String(pluginInfo.url || "").indexOf("https://github.com/") === 0
+  // Shares the firmware status line when that is on screen, else stands alone.
+  readonly property bool versionInline: connected && firmwareBuild !== null
+  function versionText() {
+    var status = pluginStatusText()
+    return "v" + pluginVersion + (status !== "" ? "  ·  " + status : "")
+  }
   function pluginStatusText() {
     switch (String(pluginInfo.status || "")) {
     case "latest": return "✓ " + t("pluginLatest", "latest")
@@ -750,14 +758,41 @@ Panel {
           }
 
           // Said out loud, so "no notice" never has to be read as "up to date".
-          Text {
+          // The plugin version shares this line, on the right.
+          Item {
             width: parent.width
-            visible: text !== ""
-            text: root.firmwareStatusText()
-            color: root.firmwareLatest.status === "latest" ? root.foreground : root.dim
-            wrapMode: Text.WordWrap
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
+            visible: firmwareStatus.text !== "" || inlineVersion.visible
+            height: Math.max(firmwareStatus.implicitHeight, inlineVersion.implicitHeight)
+
+            Text {
+              id: firmwareStatus
+              anchors.left: parent.left
+              anchors.top: parent.top
+              width: parent.width - (inlineVersion.visible ? inlineVersion.implicitWidth + Style.space(12) : 0)
+              text: root.firmwareStatusText()
+              color: root.firmwareLatest.status === "latest" ? root.foreground : root.dim
+              wrapMode: Text.WordWrap
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              id: inlineVersion
+              anchors.right: parent.right
+              anchors.top: parent.top
+              visible: root.versionInline && root.pluginVersion !== ""
+              text: root.versionText()
+              color: root.pluginUpdate ? root.urgent : root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+
+              MouseArea {
+                anchors.fill: parent
+                enabled: root.pluginLinkable
+                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: Qt.openUrlExternally(root.pluginInfo.url)
+              }
+            }
           }
 
           Text {
@@ -1009,13 +1044,12 @@ Panel {
           }
         }
 
-        // ---------- Plugin version, bottom right; an update links to its release ----------
+        // ---------- Plugin version, bottom right, when there is no firmware line to share ----------
         Text {
           width: parent.width
-          visible: root.pluginVersion !== ""
+          visible: !root.versionInline && root.pluginVersion !== ""
           horizontalAlignment: Text.AlignRight
-          text: "v" + root.pluginVersion
-                + (root.pluginStatusText() !== "" ? "  ·  " + root.pluginStatusText() : "")
+          text: root.versionText()
           color: root.pluginUpdate ? root.urgent : root.dim
           elide: Text.ElideLeft
           font.family: root.fontFamily
@@ -1023,7 +1057,7 @@ Panel {
 
           MouseArea {
             anchors.fill: parent
-            enabled: root.pluginUpdate && String(root.pluginInfo.url || "").indexOf("https://github.com/") === 0
+            enabled: root.pluginLinkable
             cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
             onClicked: Qt.openUrlExternally(root.pluginInfo.url)
           }
