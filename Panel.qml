@@ -93,26 +93,67 @@ Panel {
     }
     return notes
   }
-  // One keyboard row: Ring when idle; Stop, Left, Right while it rings.
-  readonly property var findActions: findActive
-    ? [{value: "stop"}, {value: "left"}, {value: "right"}]
-    : [{value: "ring"}]
+  // Same rule as the helper: only a bud known to be out of an ear can be unmuted.
+  function findMuteEnabled(side) {
+    return ["idle", "case", "disconnected"].indexOf(String(placement[side] || "")) >= 0
+  }
+  // One keyboard row: Ring when idle; Stop and the mute toggles that can be
+  // used while it rings (a disabled toggle is not a stop for the cursor).
+  readonly property var findActions: {
+    if (!findActive) return [{value: "ring"}]
+    var actions = [{value: "stop"}]
+    if (findMuteEnabled("left")) actions.push({value: "left"})
+    if (findMuteEnabled("right")) actions.push({value: "right"})
+    return actions
+  }
   function findAction(value) {
     if (!service) return
     if (value === "ring") service.findStart()
     else if (value === "stop") service.findStop()
-    else if (value === "left") service.findMute(findMuted.left !== true, findMuted.right === true)
-    else if (value === "right") service.findMute(findMuted.left === true, findMuted.right !== true)
+    else if (value === "left" && findMuteEnabled("left"))
+      service.findMute(findMuted.left !== true, findMuted.right === true)
+    else if (value === "right" && findMuteEnabled("right"))
+      service.findMute(findMuted.left === true, findMuted.right !== true)
   }
-  function findHasCursor(index) {
+  function findActionIndex(value) {
+    for (var i = 0; i < findActions.length; i++)
+      if (findActions[i].value === value) return i
+    return -1
+  }
+  function findHasCursor(value) {
     var row = focusedRow()
-    return row !== null && row.type === "find" && groupIndex === index
+    return row !== null && row.type === "find" && groupIndex === findActionIndex(value)
+  }
+  // The helper says why a search was refused or stopped as a code.
+  function findReasonText(code) {
+    var texts = {
+      "not_connected": t("findNotConnected", "The earbuds are not connected."),
+      "unsupported": t("findUnsupported", "This model can't ring from here."),
+      "firmware": t("findFirmware", "Not while a firmware update is running."),
+      "firmware_started": t("findFirmwareStarted", "Stopped: a firmware update is starting."),
+      "both_worn": t("findBothWorn", "Both earbuds are in your ears. Take at least one out to ring them."),
+      "unknown_placement": t("findUnknownPlacement",
+                             "The earbuds haven't said yet whether they are in your ears. Try again in a moment."),
+      "none_can_ring": t("findNoneCanRing",
+                         "No earbud can ring: one in your ear stays muted, and one that is not connected can't play a sound."),
+      "no_confirm": t("findNoConfirm", "Stopped: the earbuds didn't confirm muting the bud in your ear."),
+      "unsafe_unmute": t("findUnsafeUnmute", "Stopped: the earbuds unmuted the bud in your ear."),
+      "timeout": t("findTimeout", "Stopped by itself after 90 s."),
+      "buds_stopped": t("findBudsStopped", "The earbuds stopped ringing.")
+    }
+    return texts[code] !== undefined ? texts[code] : String(code || "")
   }
 
-  // The action list changes length when a search starts or ends.
+  // The action list changes when a search starts or ends, and when a bud
+  // goes in or out of an ear: keep the cursor on a real button.
   onFindActiveChanged: {
     var row = focusedRow()
     if (row && row.type === "find") groupIndex = 0
+  }
+  onFindActionsChanged: {
+    var row = focusedRow()
+    if (row && row.type === "find" && groupIndex >= findActions.length)
+      groupIndex = findActions.length - 1
   }
 
   Timer {
@@ -240,8 +281,9 @@ Panel {
     connecting = false
     connectTimeoutTimer.stop()
     everSearched = false
-    // Closing the panel ends a search (and clears its last message).
-    if (findState !== null && service) service.findStop()
+    // Closing the panel stops ringing: once it is closed there is no Stop
+    // button left. Only while it rings, so the last reason survives a close.
+    if (findActive && service) service.findStop()
   }
 
   Timer {
@@ -905,7 +947,7 @@ Panel {
             text: root.t("findRing", "Ring earbuds")
             iconText: "󰓃"
             bordered: true
-            hasCursor: root.findHasCursor(0)
+            hasCursor: root.findHasCursor("ring")
             foreground: root.foreground
             fontFamily: root.fontFamily
             fontSize: Style.font.caption
@@ -928,7 +970,7 @@ Panel {
             Button {
               text: root.t("findStop", "Stop")
               bordered: true
-              hasCursor: root.findHasCursor(0)
+              hasCursor: root.findHasCursor("stop")
               foreground: root.urgent
               fontFamily: root.fontFamily
               fontSize: Style.font.caption
@@ -951,27 +993,25 @@ Panel {
 
               Button {
                 required property var modelData
-                required property int index
                 text: root.findSideName(modelData)
                 iconText: root.findMuted[modelData] === true ? "󰝟" : "󰕾"
                 selected: root.findMuted[modelData] === true
-                // Same rule as the helper: only a bud known to be out of an ear can be unmuted.
-                enabled: ["idle", "case", "disconnected"].indexOf(String(root.placement[modelData] || "")) >= 0
+                enabled: root.findMuteEnabled(modelData)
                 opacity: enabled ? 1.0 : 0.5
                 bordered: true
-                hasCursor: root.findHasCursor(index + 1)
+                hasCursor: root.findHasCursor(modelData)
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 fontSize: Style.font.caption
                 onClicked: {
                   root.selectCursor(root.rowIndexFor("find"))
-                  root.groupIndex = index + 1
+                  root.groupIndex = Math.max(0, root.findActionIndex(modelData))
                   root.findAction(modelData)
                 }
                 onHovered: function(isHovered) {
                   if (isHovered) {
                     root.selectCursor(root.rowIndexFor("find"))
-                    root.groupIndex = index + 1
+                    root.groupIndex = Math.max(0, root.findActionIndex(modelData))
                   }
                 }
               }
@@ -1014,7 +1054,7 @@ Panel {
           Text {
             width: parent.width
             visible: text !== ""
-            text: root.findState && root.findState.reason ? String(root.findState.reason) : ""
+            text: root.findState && root.findState.reason ? root.findReasonText(root.findState.reason) : ""
             color: root.urgent
             wrapMode: Text.WordWrap
             font.family: root.fontFamily

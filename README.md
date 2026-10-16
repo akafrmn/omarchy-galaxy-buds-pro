@@ -189,6 +189,13 @@ Every key is optional. Anything you leave out keeps its English text.
 | `findMuteLeft` / `findMuteRight` | Left / Right (the mute toggles, also used as `%1` below) |
 | `findWorn` / `findOffline` | %1 bud is in your ear — muted / %1 bud is not connected and can't ring. |
 | `findAutoStop` | Stops by itself in %1 s |
+| `findNotConnected` / `findUnsupported` | The earbuds are not connected. / This model can't ring from here. |
+| `findFirmware` / `findFirmwareStarted` | Not while a firmware update is running. / Stopped: a firmware update is starting. |
+| `findBothWorn` | Both earbuds are in your ears. Take at least one out to ring them. |
+| `findUnknownPlacement` | The earbuds haven't said yet whether they are in your ears. Try again in a moment. |
+| `findNoneCanRing` | No earbud can ring: one in your ear stays muted, and one that is not connected can't play a sound. |
+| `findNoConfirm` / `findUnsafeUnmute` | Stopped: the earbuds didn't confirm muting the bud in your ear. / Stopped: the earbuds unmuted the bud in your ear. |
+| `findTimeout` / `findBudsStopped` | Stopped by itself after 90 s. / The earbuds stopped ringing. |
 
 ## Battery
 
@@ -261,16 +268,23 @@ GalaxyBudsClient's:
 
 - A bud that reads as in your ear (or hasn't said where it is yet) is muted
   the moment the search starts and can't be unmuted. If the earbuds don't
-  confirm that mute within 2 seconds, the search is stopped.
-- A bud that goes into your ear during a search is muted the same way; if
-  both end up in your ears, the search stops.
+  confirm that mute within 2 seconds, well before the loud part, the search
+  is stopped.
+- Where the buds sit is only trusted from the current connection: after a
+  reconnect, or after the panel switches to another pair, Ring is refused
+  until the earbuds have reported it again (a second or so).
+- A bud that goes into your ear during a search is muted too, but by then it
+  may already be loud, so this is best effort: if the mute isn't confirmed
+  within about 1 second, the search stops. If both end up in your ears, or
+  the only bud that could ring drops off the link, the search stops.
 - With both buds in your ears, or none able to ring, it doesn't start and
   says why. A bud that has dropped off the link can't ring, and the panel
   says so.
-- It stops by itself after 90 seconds, and whenever you press Stop, close the
-  panel, the shell stops the helper, or a firmware install starts. If the
-  link drops there is nothing left to stop, and the panel forgets the search.
-  It can't be started during a firmware install.
+- **Closing the panel stops ringing**, since there is no Stop button once
+  it's closed. It also stops by itself after 90 seconds, and whenever you
+  press Stop, the shell stops the helper, or a firmware install starts. If
+  the link drops there is nothing left to stop, and the panel forgets the
+  search. It can't be started during a firmware install.
 - It never uses Samsung's "ring while wearing" command (166) and never sends
   the earbuds' mute report back to them.
 

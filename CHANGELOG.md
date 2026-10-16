@@ -21,12 +21,20 @@ All notable changes to this project are documented here. The format follows
   ([#4](https://github.com/akafrmn/omarchy-galaxy-buds-pro/issues/4)). Safer than
   GalaxyBudsClient: a bud in your ear is muted the moment the search starts, and the search stops
   if the earbuds don't confirm that within 2 s; a bud that goes into your ear mid-search is muted
-  too; it refuses to start with both buds in; it stops by itself after 90 s and on Stop, panel
-  close, helper exit (stdin closed or a signal), audio hand-over to another pair and firmware
-  install start, and forgets the search when the link drops. Never uses "ring while wearing"
-  (166) and never echoes the earbuds' mute report. New IPC methods `find` and `findStop`; new
-  labels `find`, `findRing`, `findStop`, `findWarning`, `findMuteLeft`, `findMuteRight`,
-  `findWorn`, `findOffline`, `findAutoStop`.
+  too, best effort within about 1 s; it refuses to start with both buds in, or until the current
+  connection has reported where the buds are; it stops by itself after 90 s and on Stop, panel
+  close, helper exit (stdin closed or a signal), audio hand-over to another pair, firmware install
+  start and when no bud is left that could ring, and forgets the search when the link drops.
+  Never uses "ring while wearing" (166) and never echoes the earbuds' mute report. New IPC methods
+  `find` and `findStop`; new labels `find`, `findRing`, `findStop`, `findWarning`, `findMuteLeft`,
+  `findMuteRight`, `findWorn`, `findOffline`, `findAutoStop`, and for why a search was refused or
+  stopped `findNotConnected`, `findUnsupported`, `findFirmware`, `findFirmwareStarted`,
+  `findBothWorn`, `findUnknownPlacement`, `findNoneCanRing`, `findNoConfirm`, `findUnsafeUnmute`,
+  `findTimeout`, `findBudsStopped`.
+
+### Changed
+- The helper forgets where the buds sit when the link drops or a new one comes up, until the
+  earbuds report it again.
 
 ## [2.5.0] - 2026-10-16
 
