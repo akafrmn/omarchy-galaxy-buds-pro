@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Probe whether a Galaxy Buds Pro pair accepts the EQUALIZER message over SPP.
 
-Neither this plugin's upstream, nor BudsLink, nor GalaxyBudsClient's
-Buds3ProDeviceSpec lists an equalizer feature for Buds3 Pro, even though the
-Galaxy Wearable app offers presets. So before building any EQ UI, ask the
-earbuds directly: send EQUALIZER (0x86) with each preset index and watch what
-comes back.
+GalaxyBudsClient offers the presets (off, bass boost, soft, dynamic, clear,
+treble boost) on every model, and Buds3 Pro additionally has a custom 9-band
+curve there. The panel's Equalizer section sends the same message; this asks
+the earbuds directly, outside the plugin: send EQUALIZER (0x86) with each
+preset index and print what comes back. The ACK carries the preset the
+earbuds applied.
 
 The earbuds accept control messages only while they are OUT of the case --
 placement nibble 3 means "in case" and the firmware ignores changes there.
@@ -113,7 +114,7 @@ class Probe:
                   f"{self.msg_id}: EQ is most likely not exposed over SPP on this model.")
         else:
             print(f"{len(acks)} ACK(s) across {len(self.presets)} presets.")
-            print("If the sound changed, EQ works -- wire it into the buds3pro profile row.")
+            print("If the sound changed, EQ works -- check the model's \"eq\" offset in PROFILES.")
             print("If it did not, the earbuds ACKed an unknown id without acting on it.")
 
     def run(self):

@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Equalizer presets in the panel: a new Equalizer section, between Settings and Codec, with Off,
+  Bass boost, Soft, Dynamic, Clear and Treble boost in two rows, reachable with the keyboard like
+  the other chips. The preset is read from the extended status on connect and the panel follows
+  the earbuds' acknowledgement. A custom curve set in Galaxy Wearable shows as
+  `Equalizer · Custom`; picking a preset replaces it. Shown on Buds+ and every later model, hidden
+  on the original Buds and unrecognised models. New IPC method `eq <preset>` and labels `eq`,
+  `eqOff`, `eqBass`, `eqSoft`, `eqDynamic`, `eqClear`, `eqTreble`, `eqCustom`
+  ([#3](https://github.com/akafrmn/omarchy-galaxy-buds-pro/issues/3)).
+
 ## [2.5.0] - 2026-10-16
 
 ### Added

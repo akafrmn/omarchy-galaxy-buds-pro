@@ -26,6 +26,8 @@ QtObject {
   function cycle() { send({"cmd": "cycle"}) }
   function setToggle(name, value) { send({"cmd": name, "value": value}) }
   function setCodec(profile) { send({"cmd": "codec", "value": profile}) }
+  // off, bass, soft, dynamic, clear or treble; the helper ignores anything else.
+  function setEq(preset) { send({"cmd": "eq", "value": String(preset || "")}) }
   // The helper re-checks every safeguard itself; this only asks.
   function installFirmware(build) { send({"cmd": "firmware_install", "value": String(build || "")}) }
   function cancelFirmware() { send({"cmd": "firmware_cancel"}) }
@@ -164,6 +166,7 @@ QtObject {
     function set(mode: string): void { root.setNoise(mode) }
     function status(): string { return JSON.stringify(root.state) }
     function codec(profile: string): void { root.setCodec(profile) }
+    function eq(preset: string): void { root.setEq(preset) }
     function open(): void { if (root.shell) root.shell.summon(root.pluginId, "{}") }
     function close(): void { if (root.shell) root.shell.hide(root.pluginId) }
     function toggle(): void { if (root.shell) root.shell.toggle(root.pluginId, "{}") }

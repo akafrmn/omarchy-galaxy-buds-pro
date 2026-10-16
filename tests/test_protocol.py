@@ -1349,6 +1349,146 @@ def test_update_check_works_during_a_firmware_transfer():
     assert daemon.state["plugin"]["status"] == "latest"
 
 
+# ---- equalizer --------------------------------------------------------------
+
+# Where each model reports its preset, per GalaxyBudsClient's
+# ExtendedStatusUpdateDecoder: byte 11 on Buds+, byte 9 from Buds Live on.
+# The original Buds use another encoding and stay hidden.
+EQ_OFFSETS = {"buds": None, "budsplus": 11, "budslive": 9, "budspro": 9, "buds2pro": 9, "buds2": 9,
+              "budscore": 9, "budsfe": 9, "buds3pro": 9, "buds3fe": 9, "buds4pro": 9, "buds4": 9, "buds3": 9}
+
+
+def eq_daemon(name="buds3pro"):
+    daemon = gb.Daemon()
+    daemon.profile = profile(name) if name else gb.UNKNOWN_PROFILE
+    daemon.emit = lambda: None
+    daemon.socket = FakeSocket()
+    return daemon
+
+
+def eq_payload(name, value):
+    payload = bytearray(budsplus_payload() if name == "budsplus" else extended_payload())
+    payload[EQ_OFFSETS[name]] = value
+    return bytes(payload)
+
+
+def test_eq_offsets_cover_every_model():
+    assert {row["name"] for row in gb.PROFILES} == set(EQ_OFFSETS)
+    for row in gb.PROFILES:
+        spec = row["eq"]
+        assert (spec[0] if spec else None) == EQ_OFFSETS[row["name"]], row["name"]
+    assert gb.UNKNOWN_PROFILE["eq"] is None
+
+
+def test_eq_payload_byte_per_preset():
+    expected = {"off": 0, "bass": 1, "soft": 2, "dynamic": 3, "clear": 4, "treble": 5}
+    for preset, byte in expected.items():
+        daemon = eq_daemon()
+        daemon.command(json.dumps({"cmd": "eq", "value": preset}))
+        assert sent(daemon.socket) == [(gb.MSG_EQUALIZER, bytes([byte]), 0)], preset
+    # The message id is 134 (0x86) on the wire.
+    assert gb.MSG_EQUALIZER == 0x86
+
+
+def test_eq_command_rejects_custom_and_unknown_values():
+    for value in ("custom", "loud", "", 3, None, ["bass"], {"preset": "bass"}):
+        daemon = eq_daemon()
+        daemon.command(json.dumps({"cmd": "eq", "value": value}))
+        assert daemon.socket.frames == [], value
+
+
+def test_eq_is_read_from_the_extended_status_per_model():
+    for name, offset in EQ_OFFSETS.items():
+        if offset is None:
+            continue
+        for byte, preset in ((0, "off"), (1, "bass"), (3, "dynamic"), (5, "treble")):
+            state = gb.parse_extended_status(eq_payload(name, byte), profile(name))
+            assert state["eq"] == preset, (name, byte)
+    # The noise byte sits elsewhere and is untouched by the preset.
+    state = gb.parse_extended_status(eq_payload("buds3pro", 4), profile("buds3pro"))
+    assert state["eq"] == "clear" and state["noise"] == "ambient"
+
+
+def test_eq_is_hidden_where_the_model_does_not_report_it():
+    payload = bytearray(20)
+    payload[6], payload[11] = 3, 2   # the original Buds keep their own EQ byte at 11
+    assert "eq" not in gb.parse_extended_status(bytes(payload), profile("buds"))
+    assert "eq" not in gb.parse_extended_status(eq_payload("buds3pro", 1), gb.UNKNOWN_PROFILE)
+    for name in ("buds", None):
+        daemon = eq_daemon(name)
+        daemon.command('{"cmd":"eq","value":"bass"}')
+        assert daemon.socket.frames == [], name
+        daemon.handle_ack(gb.MSG_EQUALIZER, bytes([1]))
+        assert "eq" not in daemon.state, name
+
+
+def test_eq_custom_curve_shows_as_custom():
+    state = gb.parse_extended_status(eq_payload("buds3pro", 7), profile("buds3pro"))
+    assert state["eq"] == "custom"
+    daemon = eq_daemon()
+    daemon.handle_ack(gb.MSG_EQUALIZER, bytes([7]))
+    assert daemon.state["eq"] == "custom"
+    # Picking a preset replaces it.
+    daemon.command('{"cmd":"eq","value":"soft"}')
+    daemon.handle_ack(gb.MSG_EQUALIZER, bytes([2]))
+    assert daemon.state["eq"] == "soft"
+
+
+def test_eq_unknown_values_are_ignored():
+    for byte in (6, 8, 0x42, 0xFF):
+        state = gb.parse_extended_status(eq_payload("buds2pro", byte), profile("buds2pro"))
+        assert "eq" not in state, byte
+        daemon = eq_daemon()
+        daemon.state["eq"] = "dynamic"
+        daemon.handle_ack(gb.MSG_EQUALIZER, bytes([byte]))
+        assert daemon.state["eq"] == "dynamic", byte
+
+
+def test_eq_is_blocked_during_a_firmware_transfer():
+    daemon = eq_daemon()
+    daemon.flash = {"stage": "transferring"}
+    daemon.command('{"cmd":"eq","value":"bass"}')
+    assert daemon.socket.frames == []
+    daemon = ready_to_flash()
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    frames = len(daemon.socket.frames)
+    daemon.command('{"cmd":"eq","value":"treble"}')
+    assert len(daemon.socket.frames) == frames
+
+
+def test_eq_follows_the_ack_not_the_click():
+    daemon = eq_daemon()
+    daemon.state["eq"] = "off"
+    daemon.command('{"cmd":"eq","value":"bass"}')
+    assert daemon.state["eq"] == "off", "no guessing before the earbuds answer"
+    daemon.handle(gb.MSG_ACK, bytes([gb.MSG_EQUALIZER, 1]))
+    assert daemon.state["eq"] == "bass"
+    # The earbuds' answer wins over what was asked for.
+    daemon.command('{"cmd":"eq","value":"treble"}')
+    daemon.handle(gb.MSG_ACK, bytes([gb.MSG_EQUALIZER, 4]))
+    assert daemon.state["eq"] == "clear"
+    # An empty ack changes nothing.
+    daemon.handle(gb.MSG_ACK, bytes([gb.MSG_EQUALIZER]))
+    assert daemon.state["eq"] == "clear"
+
+
+def test_eq_receipt_ack_on_buds4_keeps_the_requested_preset():
+    # Buds4 firmware acks noise control with a bare 0; a 0 answering a real
+    # preset is read the same way rather than as "off".
+    daemon = eq_daemon("buds4pro")
+    daemon.command('{"cmd":"eq","value":"soft"}')
+    daemon.handle_ack(gb.MSG_EQUALIZER, bytes([0]))
+    assert daemon.state["eq"] == "soft"
+    daemon.command('{"cmd":"eq","value":"off"}')
+    daemon.handle_ack(gb.MSG_EQUALIZER, bytes([0]))
+    assert daemon.state["eq"] == "off"
+    # Elsewhere a 0 is "off".
+    daemon = eq_daemon("buds3pro")
+    daemon.command('{"cmd":"eq","value":"soft"}')
+    daemon.handle_ack(gb.MSG_EQUALIZER, bytes([0]))
+    assert daemon.state["eq"] == "off"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):
