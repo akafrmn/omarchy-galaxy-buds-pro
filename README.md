@@ -92,7 +92,8 @@ omarchy plugin update io.github.akafrmn.galaxy-buds-pro
 Omarchy shows the diff, fast-forwards, and rolls back if the new version fails
 validation.
 
-The panel shows the installed version at the bottom right, and with
+The panel shows the installed version at the bottom right (on the firmware
+status line while the earbuds are connected), and with
 `updateCheck` on (the default) whether it is the latest release:
 `v2.5.0 · ✓ latest`, or `v2.5.0 · ↑ 2.6.0 available` in the warning colour.
 Click the notice to open that release's notes. The check asks GitHub for this

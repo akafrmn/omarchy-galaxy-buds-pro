@@ -7,7 +7,8 @@ All notable changes to this project are documented here. The format follows
 ## [2.5.0] - 2026-10-16
 
 ### Added
-- The panel shows the plugin version at the bottom right, and whether it is the latest release:
+- The panel shows the plugin version at the bottom right, on the firmware status line when the
+  earbuds are connected, and whether it is the latest release:
   `v2.5.0 · ✓ latest`, or `↑ 2.6.0 available` in the warning colour, which opens the release
   notes when clicked. The helper asks GitHub for this plugin's latest release when the shell starts
   and at most every 12 hours, sending only the plugin version. New setting `updateCheck` (on by
