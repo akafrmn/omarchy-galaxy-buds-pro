@@ -43,8 +43,9 @@ Panel {
     var worn = (placement.left === "wearing" ? 1 : 0) + (placement.right === "wearing" ? 1 : 0)
     return worn === 1
   }
-  // The preset the earbuds report, or "custom" for a curve set in Galaxy
-  // Wearable, which no chip stands for. Absent on models it is not read from.
+  // The preset the earbuds report, "custom" for a curve set in Galaxy
+  // Wearable, or "unknown" for a value the helper doesn't know; neither has a
+  // chip, but the presets still work. Absent only on models it is not read from.
   readonly property string eq: String(buds.eq || "")
   readonly property bool hasEq: buds.eq !== undefined
   // Two rows of three: six chips side by side run past the panel's edge.

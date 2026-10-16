@@ -69,10 +69,12 @@ MODES = {"off": 0, "anc": 1, "ambient": 2}
 MODE_NAMES = {v: k for k, v in MODES.items()}
 
 # Equalizer presets as the EQUALIZER message and the extended status carry
-# them. 7 is the custom curve another app (Galaxy Wearable) set: shown, never
-# sent, since its bands live in that app. Anything else is not guessed at.
+# them. 6 is the custom curve another app (Galaxy Wearable) set: shown, never
+# sent, since its bands live in that app. Captured on a Buds3 Pro, and what
+# NebulaBuds and OtoControl decode; GalaxyBudsClient says 7, from one
+# uncaptured Buds4 Pro change. Anything else reads "unknown", not a guess.
 EQ_PRESETS = {"off": 0, "bass": 1, "soft": 2, "dynamic": 3, "clear": 4, "treble": 5}
-EQ_CUSTOM = 7
+EQ_CUSTOM = 6
 EQ_NAMES = {**{v: k for k, v in EQ_PRESETS.items()}, EQ_CUSTOM: "custom"}
 
 # What actually differs between models. Everything else -- framing, CRC, the
@@ -353,8 +355,9 @@ def noise_command(kind, mode):
 
 
 def read_eq(byte):
-    """Preset name, "custom", or None for a value this file does not know."""
-    return EQ_NAMES.get(byte)
+    """Preset name, "custom", or "unknown" for a value this file does not know.
+    Unknown still keeps the control: the presets can be sent either way."""
+    return EQ_NAMES.get(byte, "unknown")
 
 
 def optional_field(payload, spec, revision):
@@ -396,7 +399,7 @@ def parse_extended_status(payload, profile):
     if one_bud is not None:
         state["one_bud_noise"] = one_bud == 1
     eq = optional_field(payload, profile_get(profile, "eq"), revision)
-    if eq is not None and read_eq(eq) is not None:
+    if eq is not None:
         state["eq"] = read_eq(eq)
     return state
 
@@ -1030,6 +1033,7 @@ class Daemon:
         self.socket = None
         self.buffer = b""
         self.connecting = False
+        self.eq_requested = None
         self.update({"connected": False, "reason": "disconnected"})
         self.flash_on_disconnect()
 
@@ -1434,14 +1438,10 @@ class Daemon:
             touch["enabled"] = params[0] == 1
             self.update({"touch": touch})
         elif acked == MSG_EQUALIZER and profile_get(self.profile, "eq"):
-            requested, self.eq_requested = self.eq_requested, None
-            value = params[0]
-            # Models that ack noise control with a bare 0 receipt may do the
-            # same here; a 0 answering a real preset is that receipt, not "off".
-            if value == 0 and requested and profile_get(self.profile, "noise_ack_receipt"):
-                value = EQ_PRESETS[requested]
-            if read_eq(value) is not None:
-                self.update({"eq": read_eq(value)})
+            # The applied preset on every model, Buds4 included (unlike its
+            # noise control ack).
+            self.eq_requested = None
+            self.update({"eq": read_eq(params[0])})
 
     def send(self, msg_id, payload=b""):
         if not self.socket:

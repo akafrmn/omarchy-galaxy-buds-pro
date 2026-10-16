@@ -63,6 +63,11 @@ Everything model-specific is one row in `PROFILES` in `bin/galaxy-buds`:
 - `noise`, `touch`, `seamless`, `spatial`, `eq`: where each field sits in the
   extended status message, as `(offset, since_revision)`. `None` hides the
   control.
+- Equalizer values: `0`–`5` are the presets, the only values ever sent. `6` is
+  a custom curve from Galaxy Wearable, read only. That is from a Buds3 Pro
+  capture (byte 9 = `6`, kept as a test fixture) and matches NebulaBuds and
+  OtoControl; GalaxyBudsClient uses `7`, from an uncaptured Buds4 Pro change.
+  Anything else reads `unknown`.
 - Quirk flags such as `noise_ack_receipt`.
 
 - `fw_model`: the model name the firmware build list uses

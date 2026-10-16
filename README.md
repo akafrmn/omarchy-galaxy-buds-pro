@@ -220,8 +220,11 @@ boost**, **Soft**, **Dynamic**, **Clear** and **Treble boost**. The preset is
 read from the earbuds when they connect, and the highlighted one is what the
 earbuds acknowledged, not just what was clicked.
 
-A custom curve set in Galaxy Wearable shows as `Equalizer · Custom` with no
-preset lit. The plugin cannot edit that curve; picking a preset replaces it.
+A custom curve set in Galaxy Wearable (value `6`, confirmed on a Buds3 Pro)
+shows as `Equalizer · Custom` with no preset lit. The plugin cannot edit that
+curve; picking a preset replaces it. GalaxyBudsClient reads custom as `7`
+instead; a value the plugin does not know leaves every preset unlit, and the
+presets still work.
 
 The section shows on every model from Buds+ on. The original Galaxy Buds encode
 their equalizer differently, so it is hidden there, as on a model the plugin
