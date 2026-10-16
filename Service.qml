@@ -37,6 +37,11 @@ QtObject {
   function pushFirmwareCheck() { send({"cmd": "firmware_check", "value": root.firmwareCheck}) }
   onFirmwareCheckChanged: pushFirmwareCheck()
 
+  // Plugin update check, same rules: off until the widget's setting arrives.
+  property bool updateCheck: false
+  function pushUpdateCheck() { send({"cmd": "update_check", "value": root.updateCheck}) }
+  onUpdateCheckChanged: pushUpdateCheck()
+
   function applyLine(line) {
     var text = String(line || "").trim()
     if (text === "") return
@@ -131,7 +136,7 @@ QtObject {
     command: ["/usr/bin/python3", root.helperPath]
     running: true
     stdinEnabled: true
-    onRunningChanged: if (running) root.pushFirmwareCheck()
+    onRunningChanged: if (running) { root.pushFirmwareCheck(); root.pushUpdateCheck() }
     stdout: SplitParser {
       onRead: function(line) { root.applyLine(line) }
     }

@@ -477,6 +477,31 @@ def fetch_firmware_list(model):
         return json.loads(response.read(512 * 1024).decode("utf-8"))
 
 
+# ---- plugin update check --------------------------------------------------
+# Same rules as the firmware check: off until the setting arrives, one GET at
+# most every 12 hours, never fatal. Only the release's tag is used.
+RELEASE_URL = "https://api.github.com/repos/akafrmn/omarchy-galaxy-buds-pro/releases/latest"
+RELEASE_PAGE = "https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v{version}"
+VERSION_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+
+
+def parse_version(text):
+    """(major, minor, patch) from "2.4.1" or "v2.4.1", None for anything else."""
+    match = VERSION_RE.fullmatch(str(text or "").strip())
+    return tuple(int(n) for n in match.groups()) if match else None
+
+
+def fetch_latest_release():
+    """Blocking GET of this plugin's latest GitHub release. Sends nothing but
+    the plugin version in the User-Agent; TLS is verified."""
+    import urllib.request
+    request = urllib.request.Request(RELEASE_URL, headers={
+        "User-Agent": f"omarchy-galaxy-buds-pro/{plugin_version()}",
+        "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(request, timeout=FIRMWARE_TIMEOUT) as response:
+        return json.loads(response.read(256 * 1024).decode("utf-8"))
+
+
 # ---- firmware installation ----------------------------------------------
 # Samsung's FOTA transfer, written from the protocol as documented by the
 # GalaxyBudsClient project (no code taken). The host offers a table of
@@ -794,7 +819,11 @@ class Daemon:
     def __init__(self, address=""):
         self.address = address.upper()
         self.profile = UNKNOWN_PROFILE
-        self.state = {"connected": False, "model": "unknown", "modes": list(UNKNOWN_PROFILE["modes"])}
+        # Read once: after `omarchy plugin update` this process still runs the
+        # old code until the shell restarts it, so it reports what it is.
+        self.version = plugin_version()
+        self.state = {"connected": False, "model": "unknown", "modes": list(UNKNOWN_PROFILE["modes"]),
+                      "plugin": {"version": self.version}}
         self.socket = None
         self.buffer = b""
         self.stdin_buffer = b""
@@ -816,6 +845,12 @@ class Daemon:
         self.fetch_image = fetch_firmware_image
         self.pinned = PINNED_FIRMWARE
         self.clock = time.monotonic
+        # Plugin update check: also off until the service passes the setting.
+        self.update_check = False
+        self.update_checked = None
+        self.update_result = None
+        self.update_checked_at = None
+        self.fetch_release = fetch_latest_release
 
     # ---- output ----------------------------------------------------------
     def emit(self):
@@ -875,7 +910,8 @@ class Daemon:
         if path != self.device_path:
             # Different earbuds: drop the previous pair's battery, mode and
             # toggles instead of showing them under the new name.
-            self.state = {"connected": False, "reason": self.state.get("reason", "")}
+            self.state = {"connected": False, "reason": self.state.get("reason", ""),
+                          "plugin": self.state.get("plugin", {"version": self.version})}
             self.codec_card = ""
         self.device_path = path
         self.state["model"] = profile["name"]
@@ -1086,6 +1122,67 @@ class Daemon:
         if current == build and self.firmware_check:
             self.show_firmware_update(notice)
         return False
+
+    # ---- plugin update check ----------------------------------------------
+    def set_plugin(self, values):
+        self.update({"plugin": dict({"version": self.version}, **values)})
+
+    def check_plugin_update(self):
+        """Look up this plugin's newest release in the background, at most
+        every 12 hours. Returns True so it can double as a GLib timer."""
+        if not self.update_check:
+            return True
+        now = self.clock()
+        if self.update_checked is not None and now - self.update_checked < FIRMWARE_RECHECK:
+            # Checked recently: re-show that answer (turning the check off and
+            # on again cleared it) instead of asking again.
+            if self.update_result is not None:
+                self.show_plugin_update(self.update_result)
+            return True
+        self.update_checked = now
+        self.set_plugin({"status": "checking"})
+
+        def job():
+            try:
+                release = self.fetch_release()
+            except Exception as error:  # network, TLS, JSON: never fatal
+                if DEBUG:
+                    print(f"plugin update check failed: {error!r}", file=sys.stderr, flush=True)
+                self.defer(self.plugin_check_failed)
+                return
+            self.defer(lambda: self.apply_release(release))
+
+        self.spawn(job)
+        return True
+
+    def plugin_check_failed(self):
+        # Let the hourly tick try again rather than waiting 12 h.
+        self.update_checked = None
+        if self.update_check:
+            self.set_plugin({"status": "unknown"})
+        return False
+
+    def apply_release(self, release):
+        if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
+            return self.plugin_check_failed()
+        latest = parse_version(release.get("tag_name"))
+        if latest is None:
+            return self.plugin_check_failed()
+        self.update_result = latest
+        self.update_checked_at = int(time.time())
+        if self.update_check:
+            self.show_plugin_update(latest)
+        return False
+
+    def show_plugin_update(self, latest):
+        mine = parse_version(self.version)
+        if mine is None:
+            # A checkout without a release version: nothing to compare.
+            self.set_plugin({"status": "unknown"})
+            return
+        text = "%d.%d.%d" % latest
+        self.set_plugin({"status": "available" if latest > mine else "latest", "latest": text,
+                         "url": RELEASE_PAGE.format(version=text), "checked": self.update_checked_at})
 
     def show_firmware_update(self, notice):
         self.state["firmware_latest"] = {"status": "available" if notice else "latest",
@@ -1348,6 +1445,14 @@ class Daemon:
             if not self.flash and self.state.pop("firmware_install", None):
                 self.emit()
             return
+        # Talks to GitHub, not the earbuds, so a firmware transfer doesn't block it.
+        if name == "update_check":
+            self.update_check = value is True
+            if self.update_check:
+                self.check_plugin_update()
+            else:
+                self.set_plugin({"status": "off"})
+            return
         # Nothing else may talk to the earbuds while they take a firmware image.
         if self.flash and name != "refresh":
             return
@@ -1488,6 +1593,7 @@ class Daemon:
         # The lookup runs on a worker thread; its result joins the main loop.
         self.defer = lambda job: GLib.idle_add(job)
         GLib.timeout_add_seconds(3600, self.check_firmware)
+        GLib.timeout_add_seconds(3600, self.check_plugin_update)
         GLib.timeout_add_seconds(2, self.flash_watchdog)
         GLib.timeout_add_seconds(5, self.register_profile)
         self.connect()

@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.5.0] - 2026-10-16
+
+### Added
+- The panel shows the plugin version at the bottom right, on the firmware status line when the
+  earbuds are connected, and whether it is the latest release:
+  `v2.5.0 · ✓ latest`, or `↑ 2.6.0 available` in the warning colour, which opens the release
+  notes when clicked. The helper asks GitHub for this plugin's latest release when the shell starts
+  and at most every 12 hours, sending only the plugin version. New setting `updateCheck` (on by
+  default) turns the lookup off; the version stays visible. New labels `pluginLatest`,
+  `pluginAvailable`, `pluginChecking`.
+
 ## [2.4.1] - 2026-10-16
 
 ### Fixed
@@ -146,6 +157,7 @@ First release as `io.github.akafrmn.galaxy-buds-pro`, based on
 - Plugin id is now `io.github.akafrmn.galaxy-buds-pro`. Remove `aislandener.galaxy-buds` before
   installing: only one program can hold the earbuds' control link.
 
+[2.5.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.5.0
 [2.4.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.4.1
 [2.4.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.4.0
 [2.3.3]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.3.3

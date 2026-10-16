@@ -92,6 +92,15 @@ omarchy plugin update io.github.akafrmn.galaxy-buds-pro
 Omarchy shows the diff, fast-forwards, and rolls back if the new version fails
 validation.
 
+The panel shows the installed version at the bottom right (on the firmware
+status line while the earbuds are connected), and with
+`updateCheck` on (the default) whether it is the latest release:
+`v2.5.0 · ✓ latest`, or `v2.5.0 · ↑ 2.6.0 available` in the warning colour.
+Click the notice to open that release's notes. The check asks GitHub for this
+plugin's latest release when the shell starts and at most every 12 hours,
+sending nothing but the plugin version. `"updateCheck": false` turns it off and
+the version is still shown.
+
 ## Remove
 
 ```bash
@@ -131,6 +140,7 @@ Set these on the widget's entry in `~/.config/omarchy/shell.json`:
   "lowBatteryWarning": true,
   "lowBatteryThreshold": 15,
   "firmwareCheck": true,
+  "updateCheck": true,
   "labels": { "anc": "ANC", "inCase": "Im Etui" } }
 ```
 
@@ -139,6 +149,7 @@ Set these on the widget's entry in `~/.config/omarchy/shell.json`:
 | `lowBatteryWarning` | `true` | Notify when either earbud reaches the threshold |
 | `lowBatteryThreshold` | `15` | Percent, 1–50. Re-arms once the bud climbs 5% clear |
 | `firmwareCheck` | `true` | Look up newer firmware for your model (see [Firmware](#firmware)) |
+| `updateCheck` | `true` | Say whether this plugin is the latest release (see [Update](#update)) |
 | `labels` | `{}` | Replace any visible string (see below) |
 
 Earbuds that are charging, in the case or not connected are never counted
@@ -331,7 +342,9 @@ on Linux. What it usually is:
   when the earbuds connect and at most every 12 hours, to check for newer
   firmware (`"firmwareCheck": false` turns it off); and, only when you click
   Install, the download of that firmware image (about 9 MB, kept in memory).
-  Nothing else.
+  And one HTTPS GET to `api.github.com` for this plugin's latest release, when
+  the shell starts and at most every 12 hours (`"updateCheck": false` turns it
+  off). Nothing else.
 - **Background**: one helper process, started and stopped with the shell.
 - **IPC**: the `io.github.akafrmn.galaxy-buds-pro` shell target. The plugin adds
   no keybindings of its own.
