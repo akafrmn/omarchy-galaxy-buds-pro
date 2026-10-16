@@ -1174,7 +1174,11 @@ def restartable_daemon():
     daemon.profile_path = "/omarchy/galaxybuds"
     daemon.manager = FakeManager()
     daemon.managers = []
+    daemon.bluez_up = True
     def profile_manager():
+        if not daemon.bluez_up:
+            # dbus-python's get_object raises when nobody owns org.bluez.
+            raise FakeDBusException("org.freedesktop.DBus.Error.NameHasNoOwner")
         daemon.managers.append(FakeManager())
         return daemon.managers[-1]
     daemon.profile_manager = profile_manager
@@ -1218,6 +1222,20 @@ def test_unknown_profile_on_connect_registers_again():
     assert not daemon.registered and daemon.state["reason"] == "profile busy"
     assert daemon.manager is daemon.managers[-1], "a failed registration rebuilds the proxy"
     daemon.register_profile()
+    assert daemon.registered and daemon.manager.registered == [gb.SPP_NEW]
+
+
+def test_registration_keeps_retrying_while_bluez_is_away():
+    daemon = restartable_daemon()
+    daemon.manager = FakeManager(fail=True)
+    daemon.bluez_up = False
+    assert daemon.register_profile() is True, "no bluetoothd must not cancel the retry timer"
+    assert not daemon.registered and not daemon.managers
+    daemon.on_bluez_owner_changed("org.bluez", "", ":1.409")   # raced: gone again
+    assert not daemon.registered
+    daemon.bluez_up = True
+    assert daemon.register_profile() is True   # stale proxy fails, a fresh one is made
+    assert daemon.register_profile() is True
     assert daemon.registered and daemon.manager.registered == [gb.SPP_NEW]
 
 

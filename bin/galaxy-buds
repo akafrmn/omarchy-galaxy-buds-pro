@@ -950,8 +950,7 @@ class Daemon:
             self.disconnect()
         self.connecting = False
         self.registered = False
-        if new_owner:
-            self.manager = self.profile_manager()
+        if new_owner and self.refresh_manager():
             self.register_profile()
 
     def on_new_connection(self, fd):
@@ -1421,7 +1420,7 @@ class Daemon:
             self.registered = True
         except dbus.DBusException:
             # Also covers a proxy left pointing at a bluetoothd that is gone.
-            self.manager = self.profile_manager()
+            self.refresh_manager()
             self.update({"connected": False, "reason": "profile busy"})
         return True
 
@@ -1429,6 +1428,17 @@ class Daemon:
         import dbus
         return dbus.Interface(self.bus.get_object("org.bluez", "/org/bluez"),
                               "org.bluez.ProfileManager1")
+
+    def refresh_manager(self):
+        """Point the proxy at the current bluetoothd. While none is on the bus
+        this raises, and an exception would cancel the GLib timer calling us,
+        so keep the old proxy and let the register tick try again."""
+        import dbus
+        try:
+            self.manager = self.profile_manager()
+        except dbus.DBusException:
+            return False
+        return True
 
     # ---- lifecycle -------------------------------------------------------
     def run(self):
