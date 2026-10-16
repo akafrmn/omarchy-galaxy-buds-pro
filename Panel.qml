@@ -205,16 +205,19 @@ Panel {
     return Math.max(1, Math.min(50, n))
   }
   readonly property bool firmwareCheck: setting("firmwareCheck", true) === true
+  readonly property bool updateCheck: setting("updateCheck", true) === true
   function pushLowBatterySettings() {
     if (!service) return
     service.lowBatteryEnabled = lowBatteryEnabled
     service.lowBatteryThreshold = lowBatteryThreshold
     service.firmwareCheck = firmwareCheck
+    service.updateCheck = updateCheck
   }
   onServiceChanged: pushLowBatterySettings()
   onLowBatteryEnabledChanged: pushLowBatterySettings()
   onLowBatteryThresholdChanged: pushLowBatterySettings()
   onFirmwareCheckChanged: pushLowBatterySettings()
+  onUpdateCheckChanged: pushLowBatterySettings()
   Component.onCompleted: pushLowBatterySettings()
 
   // Without these the bar gives the widget zero width and nothing renders.
@@ -327,6 +330,20 @@ Panel {
              + Qt.formatTime(at, "hh:mm") : "")
     case "checking": return t("fwChecking", "Checking…")
     case "unknown": return t("fwUnknown", "Couldn't check for updates")
+    }
+    return ""
+  }
+  // ---- plugin version ----------------------------------------------------
+  readonly property var pluginInfo: buds.plugin || ({})
+  readonly property string pluginVersion: String(pluginInfo.version
+                                                 || (service && service.manifest ? service.manifest.version : "")
+                                                 || "")
+  readonly property bool pluginUpdate: pluginInfo.status === "available"
+  function pluginStatusText() {
+    switch (String(pluginInfo.status || "")) {
+    case "latest": return "✓ " + t("pluginLatest", "latest")
+    case "available": return "↑ " + pluginInfo.latest + " " + t("pluginAvailable", "available")
+    case "checking": return t("pluginChecking", "checking…")
     }
     return ""
   }
@@ -989,6 +1006,26 @@ Panel {
             foreground: root.foreground
             fontFamily: root.fontFamily
             onClicked: root.onSearchButtonClicked()
+          }
+        }
+
+        // ---------- Plugin version, bottom right; an update links to its release ----------
+        Text {
+          width: parent.width
+          visible: root.pluginVersion !== ""
+          horizontalAlignment: Text.AlignRight
+          text: "v" + root.pluginVersion
+                + (root.pluginStatusText() !== "" ? "  ·  " + root.pluginStatusText() : "")
+          color: root.pluginUpdate ? root.urgent : root.dim
+          elide: Text.ElideLeft
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+
+          MouseArea {
+            anchors.fill: parent
+            enabled: root.pluginUpdate && String(root.pluginInfo.url || "").indexOf("https://github.com/") === 0
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: Qt.openUrlExternally(root.pluginInfo.url)
           }
         }
       }

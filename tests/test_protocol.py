@@ -1248,6 +1248,107 @@ def test_other_connect_errors_keep_the_registration():
     assert daemon.registered
 
 
+# ---- plugin update check --------------------------------------------------
+
+def update_daemon(version="2.5.0", release=None, error=None):
+    daemon = gb.Daemon()
+    daemon.emit = lambda: None
+    daemon.spawn = lambda job: job()
+    daemon.version = version
+    daemon.now = 1000.0
+    daemon.clock = lambda: daemon.now
+    daemon.fetches = 0
+    def fetch_release():
+        daemon.fetches += 1
+        if error:
+            raise error
+        return release if release is not None else {"tag_name": "v2.5.0"}
+    daemon.fetch_release = fetch_release
+    return daemon
+
+
+def test_parse_version():
+    assert gb.parse_version("v2.4.1") == (2, 4, 1)
+    assert gb.parse_version("2.10.0") > gb.parse_version("2.9.9")
+    for bad in ("dev", "", None, "v2.5", "2.5.0-rc1"):
+        assert gb.parse_version(bad) is None, bad
+
+
+def test_plugin_version_is_reported_before_any_check():
+    daemon = gb.Daemon()
+    assert daemon.state["plugin"] == {"version": gb.plugin_version()}
+    assert gb.parse_version(gb.plugin_version()), "the manifest version is what the panel shows"
+
+
+def test_update_check_off_makes_no_request():
+    daemon = update_daemon()
+    daemon.check_plugin_update()
+    daemon.command(json.dumps({"cmd": "update_check", "value": False}))
+    assert daemon.fetches == 0
+    assert daemon.state["plugin"] == {"version": "2.5.0", "status": "off"}
+
+
+def test_update_check_says_latest():
+    daemon = update_daemon(release={"tag_name": "v2.5.0"})
+    daemon.command(json.dumps({"cmd": "update_check", "value": True}))
+    plugin = daemon.state["plugin"]
+    assert plugin["status"] == "latest" and plugin["version"] == "2.5.0" and plugin["latest"] == "2.5.0"
+    assert isinstance(plugin["checked"], int)
+
+
+def test_update_check_offers_a_newer_release():
+    daemon = update_daemon(release={"tag_name": "v2.10.0", "html_url": "https://evil.example/"})
+    daemon.command(json.dumps({"cmd": "update_check", "value": True}))
+    plugin = daemon.state["plugin"]
+    assert plugin["status"] == "available" and plugin["latest"] == "2.10.0"
+    assert plugin["url"] == "https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.10.0", \
+        "the link is built from the version, never taken from the response"
+
+
+def test_update_check_ignores_older_drafts_and_prereleases():
+    daemon = update_daemon(release={"tag_name": "v2.4.1"})
+    daemon.command(json.dumps({"cmd": "update_check", "value": True}))
+    assert daemon.state["plugin"]["status"] == "latest", "running something newer than the release"
+    for release in ({"tag_name": "v9.0.0", "prerelease": True}, {"tag_name": "v9.0.0", "draft": True},
+                    {"tag_name": "nightly"}, [], "nope"):
+        daemon = update_daemon(release=release)
+        daemon.command(json.dumps({"cmd": "update_check", "value": True}))
+        assert daemon.state["plugin"]["status"] == "unknown", release
+
+
+def test_update_check_failure_retries_and_success_is_cached():
+    daemon = update_daemon(error=OSError("offline"))
+    daemon.command(json.dumps({"cmd": "update_check", "value": True}))
+    assert daemon.state["plugin"]["status"] == "unknown" and daemon.fetches == 1
+    daemon.check_plugin_update()
+    assert daemon.fetches == 2, "a failed check is retried on the next tick"
+
+    daemon = update_daemon(release={"tag_name": "v2.6.0"})
+    daemon.command(json.dumps({"cmd": "update_check", "value": True}))
+    checked = daemon.state["plugin"]["checked"]
+    daemon.command(json.dumps({"cmd": "update_check", "value": False}))
+    daemon.now += 3600
+    daemon.command(json.dumps({"cmd": "update_check", "value": True}))
+    assert daemon.fetches == 1, "at most one request every 12 hours"
+    assert daemon.state["plugin"]["status"] == "available" and daemon.state["plugin"]["checked"] == checked
+    daemon.now += gb.FIRMWARE_RECHECK
+    daemon.check_plugin_update()
+    assert daemon.fetches == 2
+
+
+def test_dev_checkout_has_nothing_to_compare():
+    daemon = update_daemon(version="dev", release={"tag_name": "v2.5.0"})
+    daemon.command(json.dumps({"cmd": "update_check", "value": True}))
+    assert daemon.state["plugin"] == {"version": "dev", "status": "unknown"}
+
+
+def test_update_check_works_during_a_firmware_transfer():
+    daemon = update_daemon(release={"tag_name": "v2.5.0"})
+    daemon.flash = {"stage": "transferring"}
+    daemon.command(json.dumps({"cmd": "update_check", "value": True}))
+    assert daemon.state["plugin"]["status"] == "latest"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):
