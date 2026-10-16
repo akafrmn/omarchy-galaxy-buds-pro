@@ -135,7 +135,7 @@ QtObject {
     stdout: SplitParser {
       onRead: function(line) { root.applyLine(line) }
     }
-    // The helper dying (BlueZ restart, a stray kill) would otherwise leave
+    // The helper dying (a crash, a stray kill) would otherwise leave
     // every bar frozen on its last state forever.
     onExited: {
       root.state = {}

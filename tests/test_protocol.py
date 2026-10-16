@@ -1136,6 +1136,100 @@ def test_fetch_refuses_oversize_unpinned_slow_and_foreign_downloads():
     assert cases["unpinned"][1] == {}, "an unpinned build is never requested"
 
 
+# ---- BlueZ restarts --------------------------------------------------------
+
+class FakeDBusException(Exception):
+    pass
+
+
+def fake_dbus():
+    """register_profile imports dbus; CI has no python-dbus, and only the
+    exception type is needed."""
+    import types
+    module = types.ModuleType("dbus")
+    module.DBusException = FakeDBusException
+    sys.modules.setdefault("dbus", module)
+    return sys.modules["dbus"]
+
+
+class FakeManager:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.registered = []
+
+    def UnregisterProfile(self, path):
+        raise fake_dbus().DBusException("org.bluez.Error.DoesNotExist")
+
+    def RegisterProfile(self, path, uuid, options):
+        if self.fail:
+            raise fake_dbus().DBusException("org.freedesktop.DBus.Error.ServiceUnknown")
+        self.registered.append(uuid)
+
+
+def restartable_daemon():
+    fake_dbus()
+    daemon = gb.Daemon()
+    daemon.profile = profile("buds3pro")
+    daemon.emit = lambda: None
+    daemon.profile_path = "/omarchy/galaxybuds"
+    daemon.manager = FakeManager()
+    daemon.managers = []
+    def profile_manager():
+        daemon.managers.append(FakeManager())
+        return daemon.managers[-1]
+    daemon.profile_manager = profile_manager
+    return daemon
+
+
+def test_bluez_restart_drops_the_link_and_registers_again():
+    daemon = restartable_daemon()
+    daemon.socket = sock = FakeSocket()
+    daemon.registered = True
+    daemon.state.update({"connected": True, "battery": {"left": 80, "right": 75}})
+    daemon.on_bluez_owner_changed("org.bluez", ":1.5", ":1.409")
+    assert sock.closed and daemon.socket is None, "the dead bluetoothd's link is closed"
+    assert daemon.state["connected"] is False
+    assert daemon.registered, "the new bluetoothd gets our profile right away"
+    assert daemon.manager is daemon.managers[-1], "the proxy follows the new bluetoothd"
+    assert daemon.manager.registered == [gb.SPP_NEW]
+
+
+def test_bluez_gone_waits_for_it_to_come_back():
+    daemon = restartable_daemon()
+    daemon.registered = True
+    daemon.on_bluez_owner_changed("org.bluez", ":1.5", "")
+    assert not daemon.registered and not daemon.managers, "nothing to register with yet"
+    assert daemon.register_profile() is True, "the retry timer stays alive"
+
+
+def test_register_timer_survives_a_successful_registration():
+    daemon = restartable_daemon()
+    daemon.registered = True
+    assert daemon.register_profile() is True, "returning False would cancel the GLib timer"
+
+
+def test_unknown_profile_on_connect_registers_again():
+    daemon = restartable_daemon()
+    daemon.registered = True
+    daemon.manager = FakeManager(fail=True)
+    daemon.on_connect_error(Exception("org.bluez.Error.InvalidArguments: br-connection-profile-unavailable"))
+    assert not daemon.registered and daemon.state["reason"] == "connect failed"
+    daemon.register_profile()
+    assert not daemon.registered and daemon.state["reason"] == "profile busy"
+    assert daemon.manager is daemon.managers[-1], "a failed registration rebuilds the proxy"
+    daemon.register_profile()
+    assert daemon.registered and daemon.manager.registered == [gb.SPP_NEW]
+
+
+def test_other_connect_errors_keep_the_registration():
+    daemon = restartable_daemon()
+    daemon.registered = True
+    daemon.on_connect_error(Exception("org.bluez.Error.Failed: Protocol not available"))
+    assert daemon.registered
+    daemon.on_connect_error(Exception("org.bluez.Error.AlreadyConnected"))
+    assert daemon.registered
+
+
 if __name__ == "__main__":
     failures = 0
     for name, test in sorted(globals().items()):
