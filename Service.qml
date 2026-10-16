@@ -32,6 +32,11 @@ QtObject {
   function installFirmware(build) { send({"cmd": "firmware_install", "value": String(build || "")}) }
   function cancelFirmware() { send({"cmd": "firmware_cancel"}) }
   function dismissFirmware() { send({"cmd": "firmware_dismiss"}) }
+  // Find My Earbuds. Every safeguard (worn buds muted, the 90 s stop, stop on
+  // exit and link loss) lives in the helper; these only ask.
+  function findStart() { send({"cmd": "find_start"}) }
+  function findStop() { send({"cmd": "find_stop"}) }
+  function findMute(left, right) { send({"cmd": "find_mute", "value": {"left": left === true, "right": right === true}}) }
 
   // Firmware update check. Starts off and follows the widget's setting (on by
   // default), so a user who turned it off never makes a single request.
@@ -179,5 +184,8 @@ QtObject {
     function firmwareInstall(build: string): void { root.installFirmware(build) }
     function firmwareCancel(): void { root.cancelFirmware() }
     function firmwareDismiss(): void { root.dismissFirmware() }
+    // Rings the earbuds (loud); stops by itself after 90 s.
+    function find(): void { root.findStart() }
+    function findStop(): void { root.findStop() }
   }
 }

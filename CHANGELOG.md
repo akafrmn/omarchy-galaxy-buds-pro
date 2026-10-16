@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.6.0] - 2026-10-16
 
 ### Added
 - Equalizer presets in the panel: a new Equalizer section, between Settings and Codec, with Off,
@@ -16,6 +16,25 @@ All notable changes to this project are documented here. The format follows
   model, hidden on the original Buds and unrecognised models. New IPC method `eq <preset>` and labels `eq`,
   `eqOff`, `eqBass`, `eqSoft`, `eqDynamic`, `eqClear`, `eqTreble`, `eqCustom`
   ([#3](https://github.com/akafrmn/omarchy-galaxy-buds-pro/issues/3)).
+- **Find earbuds**: a new panel section (after Codec) rings the earbuds so you can find them,
+  with per-bud mute toggles, a Stop button and a countdown
+  ([#4](https://github.com/akafrmn/omarchy-galaxy-buds-pro/issues/4)). Safer than
+  GalaxyBudsClient: a bud in your ear is muted the moment the search starts, and the search stops
+  if the earbuds don't confirm that within 2 s; a bud that goes into your ear mid-search is muted
+  too, best effort within about 1 s; it refuses to start with both buds in, or until the current
+  connection has reported where the buds are; it stops by itself after 90 s and on Stop, panel
+  close, helper exit (stdin closed or a signal), audio hand-over to another pair, firmware install
+  start and when no bud is left that could ring, and forgets the search when the link drops.
+  Never uses "ring while wearing" (166) and never echoes the earbuds' mute report. New IPC methods
+  `find` and `findStop`; new labels `find`, `findRing`, `findStop`, `findWarning`, `findMuteLeft`,
+  `findMuteRight`, `findWorn`, `findOffline`, `findAutoStop`, and for why a search was refused or
+  stopped `findNotConnected`, `findUnsupported`, `findFirmware`, `findFirmwareStarted`,
+  `findBothWorn`, `findUnknownPlacement`, `findNoneCanRing`, `findNoConfirm`, `findUnsafeUnmute`,
+  `findTimeout`, `findBudsStopped`.
+
+### Changed
+- The helper forgets where the buds sit when the link drops or a new one comes up, until the
+  earbuds report it again.
 
 ## [2.5.0] - 2026-10-16
 
@@ -170,6 +189,7 @@ First release as `io.github.akafrmn.galaxy-buds-pro`, based on
 - Plugin id is now `io.github.akafrmn.galaxy-buds-pro`. Remove `aislandener.galaxy-buds` before
   installing: only one program can hold the earbuds' control link.
 
+[2.6.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.6.0
 [2.5.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.5.0
 [2.4.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.4.1
 [2.4.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.4.0

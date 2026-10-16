@@ -1476,6 +1476,344 @@ def test_eq_ack_is_the_applied_preset_on_buds4_too():
     assert daemon.eq_requested == "bass"
     daemon.disconnect()
     assert daemon.eq_requested is None
+# ---- find my earbuds ----
+
+def finding_daemon(left="idle", right="idle", model="buds3pro"):
+    daemon = gb.Daemon()
+    daemon.profile = profile(model)
+    daemon.emit = lambda: None
+    daemon.socket = FakeSocket()
+    daemon.now = 1000.0
+    daemon.clock = lambda: daemon.now
+    daemon.scheduled = []
+    daemon.schedule = lambda ms, job: daemon.scheduled.append((ms, job))
+    daemon.state.update({"connected": True, "find": gb.find_idle(),
+                         "placement": {"left": left, "right": right}})
+    return daemon
+
+
+def find_frames(daemon):
+    return [(mid, payload) for mid, payload, _ in sent(daemon.socket)]
+
+
+def tick(daemon):
+    """Fire every live watchdog timer once, as GLib would; True while one runs."""
+    jobs, daemon.scheduled = daemon.scheduled, []
+    for ms, job in jobs:
+        if job():
+            daemon.scheduled.append((ms, job))
+    return daemon.find_ticking != 0
+
+
+def status_with(left, right):
+    """MSG_STATUS payload with placement nibbles (1 worn, 2 idle, 3 case, 0 off the link)."""
+    return bytes([5, 80, 75, 1, 0, (left << 4) | right, 70, 0x00])
+
+
+def test_find_start_stop_and_mute_frames():
+    daemon = finding_daemon()
+    daemon.command('{"cmd":"find_start"}')
+    assert find_frames(daemon) == [(160, b"")], "no mute when no bud is worn"
+    find = daemon.state["find"]
+    assert find["active"] is True and find["muted"] == {"left": False, "right": False}
+    assert abs(find["until"] - (gb.time.time() + 90)) < 5
+    assert [ms for ms, _ in daemon.scheduled] == [gb.FIND_TICK_MS], "the watchdog runs while it rings"
+    daemon.command('{"cmd":"find_mute","value":{"left":true,"right":false}}')
+    assert find_frames(daemon)[-1] == (162, bytes([1, 0]))
+    assert daemon.state["find"]["muted"]["left"] is False, "nothing assumed before the earbuds report"
+    daemon.command('{"cmd":"find_stop"}')
+    assert find_frames(daemon)[-1] == (161, b"")
+    assert daemon.state["find"] == gb.find_idle() and daemon.find is None
+    assert gb.MSG_FIND_START == 160 and gb.MSG_FIND_STOP == 161 and gb.MSG_MUTE_EARBUD == 162
+    assert not any(mid == 166 for mid, _ in find_frames(daemon)), "never ring while worn"
+
+
+def test_find_mutes_a_worn_bud_right_after_start():
+    daemon = finding_daemon(left="wearing", right="case")
+    daemon.command('{"cmd":"find_start"}')
+    assert find_frames(daemon) == [(160, b""), (162, bytes([1, 0]))]
+    daemon.handle(gb.MSG_MUTE_EARBUD_UPDATED, bytes([1, 0]))
+    assert daemon.find["confirm_by"] is None
+    assert daemon.state["find"]["muted"] == {"left": True, "right": False}
+    # The user can't unmute the bud in the ear from the panel either.
+    daemon.command('{"cmd":"find_mute","value":{"left":false,"right":false}}')
+    assert find_frames(daemon)[-1] == (162, bytes([1, 0]))
+
+
+def test_find_stops_when_the_mute_is_not_confirmed_in_two_seconds():
+    daemon = finding_daemon(right="wearing")
+    daemon.command('{"cmd":"find_start"}')
+    assert [ms for ms, _ in daemon.scheduled] == [gb.FIND_TICK_CONFIRM_MS], "fast ticks while unconfirmed"
+    daemon.now += 1.9
+    assert tick(daemon) is True and daemon.find is not None
+    daemon.now += 0.2
+    tick(daemon)
+    assert daemon.find is None and daemon.find_ticking == 0
+    assert find_frames(daemon)[-1] == (161, b"")
+    assert daemon.state["find"]["active"] is False and daemon.state["find"]["reason"] == "no_confirm"
+
+
+def test_find_ignores_a_stale_unsafe_report_while_confirming():
+    daemon = finding_daemon(right="wearing")
+    daemon.command('{"cmd":"find_start"}')
+    frames = len(daemon.socket.frames)
+    daemon.handle(gb.MSG_MUTE_EARBUD_UPDATED, bytes([0, 0]))   # before our mute landed
+    assert daemon.state["find"]["muted"] == {"left": False, "right": False}
+    assert daemon.find["confirm_by"] is not None and len(daemon.socket.frames) == frames
+    daemon.handle(gb.MSG_MUTE_EARBUD_UPDATED, bytes([1, 0]))   # not the worn bud: still unsafe
+    assert daemon.state["find"]["muted"] == {"left": False, "right": False}, "an unsafe report is not shown"
+    daemon.handle(gb.MSG_MUTE_EARBUD_UPDATED, bytes([0, 1]))
+    assert daemon.find["confirm_by"] is None and daemon.state["find"]["muted"] == {"left": False, "right": True}
+
+
+def test_find_mute_ack_counts_as_confirmation():
+    daemon = finding_daemon(left="wearing")
+    daemon.command('{"cmd":"find_start"}')
+    daemon.handle(gb.MSG_ACK, bytes([gb.MSG_MUTE_EARBUD, 1, 0]))
+    assert daemon.find["confirm_by"] is None
+    daemon.now += 5
+    assert daemon.find_watchdog() is True
+
+
+def test_find_refuses_when_both_buds_are_worn():
+    daemon = finding_daemon(left="wearing", right="wearing")
+    daemon.command('{"cmd":"find_start"}')
+    assert daemon.socket.frames == [] and daemon.find is None
+    assert daemon.state["find"] == dict(gb.find_idle(), reason="both_worn")
+    # No placement report yet counts as possibly worn.
+    daemon = finding_daemon()
+    daemon.state.pop("placement")
+    daemon.command('{"cmd":"find_start"}')
+    assert daemon.socket.frames == [] and daemon.state["find"]["reason"] == "unknown_placement"
+    # One worn, the other off the link: nothing could ring.
+    daemon = finding_daemon(left="wearing", right="disconnected")
+    daemon.command('{"cmd":"find_start"}')
+    assert daemon.socket.frames == [] and daemon.state["find"]["reason"] == "none_can_ring"
+
+
+def test_find_refused_after_a_reconnect_until_the_buds_report_placement():
+    daemon = finding_daemon()
+    daemon.disconnect()
+    assert "placement" not in daemon.state and "wearing" not in daemon.state
+    # Whatever a previous session said must not survive a new link either.
+    daemon.state["placement"] = {"left": "idle", "right": "idle"}
+    daemon.link_up(FakeSocket())
+    assert daemon.state["connected"] is True and "placement" not in daemon.state
+    daemon.command('{"cmd":"find_start"}')
+    assert daemon.socket.frames == [] and daemon.state["find"]["reason"] == "unknown_placement"
+    daemon.handle(gb.MSG_STATUS, status_with(1, 2))   # fresh report: left worn
+    daemon.command('{"cmd":"find_start"}')
+    assert find_frames(daemon) == [(160, b""), (162, bytes([1, 0]))]
+
+
+def test_find_refused_after_a_hand_over_to_another_pair():
+    daemon = finding_daemon()
+    daemon.default_address = "AA:BB:CC:DD:EE:FF"
+    daemon.should_retarget = lambda: True
+    daemon.connect = lambda: True
+    originals = gb.pactl, gb.address_from_sink
+    gb.pactl = lambda *args: ""   # no PipeWire in tests
+    gb.address_from_sink = lambda name: "AA:BB:CC:DD:EE:FF"
+    try:
+        daemon.refresh_audio()
+    finally:
+        gb.pactl, gb.address_from_sink = originals
+    assert "placement" not in daemon.state
+    daemon.link_up(FakeSocket())
+    daemon.command('{"cmd":"find_start"}')
+    assert daemon.socket.frames == [] and daemon.state["find"]["reason"] == "unknown_placement"
+
+
+def test_find_mutes_a_bud_that_goes_into_an_ear_mid_search():
+    daemon = finding_daemon()
+    daemon.command('{"cmd":"find_start"}')
+    assert [ms for ms, _ in daemon.scheduled] == [gb.FIND_TICK_MS]
+    daemon.handle(gb.MSG_MUTE_EARBUD_UPDATED, bytes([0, 1]))   # the user muted the right one
+    daemon.handle(gb.MSG_STATUS, status_with(1, 2))            # left goes in
+    assert find_frames(daemon)[-1] == (162, bytes([1, 1])), "the new worn bud is muted, the right stays muted"
+    assert daemon.find["confirm_by"] == daemon.now + gb.FIND_MUTE_CONFIRM_LATE == daemon.now + 1
+    assert daemon.find_ticking == gb.FIND_TICK_CONFIRM_MS, "fast ticks while the mute is unconfirmed"
+    daemon.handle(gb.MSG_MUTE_EARBUD_UPDATED, bytes([1, 1]))
+    assert daemon.find["confirm_by"] is None
+    tick(daemon)
+    assert daemon.find_ticking == gb.FIND_TICK_MS, "back to the slow period once confirmed"
+    assert [ms for ms, _ in daemon.scheduled] == [gb.FIND_TICK_MS], "one live timer at a time"
+    # After that, a report with the worn bud unmuted ends the search.
+    daemon.handle(gb.MSG_MUTE_EARBUD_UPDATED, bytes([0, 1]))
+    assert daemon.find is None and find_frames(daemon)[-1] == (161, b"")
+    assert daemon.state["find"]["reason"] == "unsafe_unmute"
+    # Both going in stops it outright.
+    daemon = finding_daemon()
+    daemon.command('{"cmd":"find_start"}')
+    daemon.handle(gb.MSG_STATUS, status_with(1, 1))
+    assert daemon.find is None and find_frames(daemon)[-1] == (161, b"")
+    assert daemon.state["find"]["reason"] == "both_worn"
+
+
+def test_find_mid_search_mute_gets_one_second():
+    daemon = finding_daemon()
+    daemon.command('{"cmd":"find_start"}')
+    daemon.handle(gb.MSG_STATUS, status_with(2, 1))   # right goes in, no confirmation follows
+    daemon.now += 0.9
+    tick(daemon)
+    assert daemon.find is not None
+    daemon.now += 0.1
+    tick(daemon)
+    assert daemon.find is None and daemon.state["find"]["reason"] == "no_confirm"
+    assert find_frames(daemon)[-1] == (161, b"")
+
+
+def test_find_stops_when_the_only_bud_that_could_ring_drops_off():
+    daemon = finding_daemon(left="wearing", right="idle")
+    daemon.command('{"cmd":"find_start"}')
+    daemon.handle(gb.MSG_MUTE_EARBUD_UPDATED, bytes([1, 0]))
+    daemon.handle(gb.MSG_STATUS, status_with(1, 0))   # right drops off the link
+    assert daemon.find is None and find_frames(daemon)[-1] == (161, b"")
+    assert daemon.state["find"]["reason"] == "none_can_ring"
+
+
+def test_find_stops_by_itself_after_90_seconds():
+    daemon = finding_daemon()
+    daemon.command('{"cmd":"find_start"}')
+    daemon.now += 89
+    assert tick(daemon) is True
+    daemon.now += 1
+    tick(daemon)
+    assert daemon.find is None and daemon.find_ticking == 0
+    assert find_frames(daemon)[-1] == (161, b"")
+    assert daemon.state["find"]["reason"] == "timeout"
+    # The earbuds answering our stop with their own 161 keeps the message.
+    daemon.handle(gb.MSG_FIND_STOP, b"")
+    assert daemon.state["find"]["reason"] == "timeout"
+
+
+def test_find_cleared_when_the_buds_stop_on_their_own():
+    daemon = finding_daemon()
+    daemon.command('{"cmd":"find_start"}')
+    frames = len(daemon.socket.frames)
+    daemon.handle(gb.MSG_FIND_STOP, b"")
+    assert daemon.find is None and daemon.state["find"] == dict(gb.find_idle(), reason="buds_stopped")
+    assert len(daemon.socket.frames) == frames, "nothing sent back"
+
+
+def test_find_mute_report_updates_state_without_an_echo():
+    daemon = finding_daemon()
+    daemon.command('{"cmd":"find_start"}')
+    frames = len(daemon.socket.frames)
+    daemon.handle(gb.MSG_MUTE_EARBUD_UPDATED, bytes([1, 1]))
+    daemon.handle(gb.MSG_MUTE_EARBUD_UPDATED, bytes([0, 1]))
+    assert daemon.state["find"]["muted"] == {"left": False, "right": True}
+    assert len(daemon.socket.frames) == frames, "163 is never echoed back"
+
+
+def test_find_cleared_on_disconnect_without_sending():
+    daemon = finding_daemon()
+    daemon.command('{"cmd":"find_start"}')
+    sock = daemon.socket
+    frames = len(sock.frames)
+    daemon.disconnect()
+    assert daemon.find is None and daemon.state["find"] == gb.find_idle()
+    assert len(sock.frames) == frames
+    tick(daemon)
+    assert daemon.find_ticking == 0, "the timer ends with the search"
+
+
+def test_find_blocked_during_a_firmware_install():
+    daemon = ready_to_flash()
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    frames = len(daemon.socket.frames)
+    daemon.command('{"cmd":"find_start"}')
+    assert len(daemon.socket.frames) == frames and daemon.find is None
+    assert daemon.state["find"]["reason"] == "firmware"
+
+
+def test_find_stops_when_a_firmware_install_starts():
+    daemon = ready_to_flash()
+    daemon.state["placement"] = {"left": "idle", "right": "idle"}
+    daemon.command('{"cmd":"find_start"}')
+    assert daemon.find is not None
+    daemon.command('{"cmd":"firmware_install","value":"R630XXU0AZG2"}')
+    mids = [mid for mid, _, _ in sent(daemon.socket)]
+    assert mids[:3] == [160, 161, gb.MSG_FOTA_OPEN], "stop goes out before the transfer"
+    assert daemon.find is None and daemon.state["find"]["reason"] == "firmware_started"
+
+
+def test_find_stops_before_the_helper_exits():
+    import os
+
+    class Loop:
+        quit_called = False
+
+        def quit(self):
+            self.quit_called = True
+
+    daemon = finding_daemon()
+    daemon.loop = Loop()
+    daemon.command('{"cmd":"find_start"}')
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)   # the shell went away: EOF
+    assert daemon.on_stdin(read_fd, 0) is False
+    os.close(read_fd)
+    assert find_frames(daemon)[-1] == (161, b"") and daemon.loop.quit_called
+    # Nothing running: exit sends nothing.
+    daemon = finding_daemon()
+    daemon.loop = Loop()
+    assert daemon.shutdown() is False and daemon.socket.frames == [] and daemon.loop.quit_called
+
+
+def test_find_hands_over_with_a_stop_when_the_audio_moves_to_another_pair():
+    daemon = finding_daemon()
+    daemon.command('{"cmd":"find_start"}')
+    sock = daemon.socket
+    daemon.default_address = "AA:BB:CC:DD:EE:FF"
+    daemon.should_retarget = lambda: True
+    daemon.connect = lambda: True
+    originals = gb.pactl, gb.address_from_sink
+    gb.pactl = lambda *args: ""   # no PipeWire in tests
+    gb.address_from_sink = lambda name: "AA:BB:CC:DD:EE:FF"
+    try:
+        daemon.refresh_audio()
+    finally:
+        gb.pactl, gb.address_from_sink = originals
+    assert [gb.decode(f)[0][0][0] for f in sock.frames][-1] == 161 and sock.closed
+
+
+def test_find_is_offered_on_every_model_and_frames_legacy_too():
+    for entry in gb.PROFILES:
+        assert gb.profile_get(entry, "find") is True, entry["name"]
+    daemon = finding_daemon(model="buds")
+    daemon.command('{"cmd":"find_start"}')
+    (mid, payload), = gb.decode(daemon.socket.frames[0], legacy=True)[0]
+    assert (mid, payload) == (160, b"")
+
+
+def test_find_refused_when_not_connected():
+    daemon = finding_daemon()
+    daemon.socket = None
+    daemon.state["connected"] = False
+    daemon.command('{"cmd":"find_start"}')
+    assert daemon.find is None and daemon.state["find"]["reason"] == "not_connected"
+    # Stop with nothing running only clears the message.
+    daemon.command('{"cmd":"find_stop"}')
+    assert daemon.state["find"] == gb.find_idle()
+
+
+def test_find_reasons_are_codes_the_panel_translates():
+    source = _path.read_text()
+    refusal = source[source.index("def find_refusal"):source.index("def mute_payload")]
+    emitted = set(re.findall(r'return "([a-z_]+)"', refusal))
+    emitted |= set(re.findall(r'(?:find_stop\(|reason ?= ?)"([a-z_]+)"', source))
+    assert emitted == set(gb.FIND_REASONS), emitted ^ set(gb.FIND_REASONS)
+    daemon = finding_daemon()
+    daemon.profile = dict(profile("buds3pro"), find=False)
+    daemon.command('{"cmd":"find_start"}')
+    assert daemon.state["find"]["reason"] == "unsupported" and daemon.socket.frames == []
+    root = _path.parent.parent
+    panel, readme, manifest = ((root / name).read_text() for name in ("Panel.qml", "README.md", "manifest.json"))
+    for code in gb.FIND_REASONS:
+        match = re.search(r'"%s": t\("(\w+)"' % code, panel)
+        assert match, f"Panel.qml does not translate {code}"
+        assert match.group(1) in readme and match.group(1) in manifest, match.group(1)
 
 
 if __name__ == "__main__":
