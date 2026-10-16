@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.6.1] - 2026-10-16
+
+### Security
+- Every text in the panel is now rendered as plain text (`textFormat: Text.PlainText`). Qt's
+  default AutoText treats a string that looks like markup as rich text, so a nearby unpaired
+  device advertising a Bluetooth name such as `Buds <img src="https://…">` made the shared shell
+  fetch and decode that image while searching, which could exhaust its memory before pairing.
+  The same applied to firmware build strings and the GitHub release tag. `tests/check_qml.py`
+  now fails on any `Text` without plain-text formatting.
+
 ## [2.6.0] - 2026-10-16
 
 ### Added
@@ -189,6 +199,7 @@ First release as `io.github.akafrmn.galaxy-buds-pro`, based on
 - Plugin id is now `io.github.akafrmn.galaxy-buds-pro`. Remove `aislandener.galaxy-buds` before
   installing: only one program can hold the earbuds' control link.
 
+[2.6.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.6.1
 [2.6.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.6.0
 [2.5.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.5.0
 [2.4.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.4.1
