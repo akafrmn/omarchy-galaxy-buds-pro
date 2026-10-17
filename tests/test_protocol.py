@@ -1268,6 +1268,18 @@ def test_socket_that_arrives_keeps_the_registration():
     assert not daemon.scheduled, "a live link needs no check"
 
 
+def test_stale_link_check_spares_a_newer_registration():
+    # bluetoothd restarted during the grace: the check was about the old
+    # profile and must leave the new registration alone.
+    daemon = stale_link_daemon()
+    daemon.on_connect_reply()
+    daemon.on_bluez_owner_changed("org.bluez", ":1.5", ":1.409")
+    assert daemon.registered
+    _, check = daemon.scheduled.pop()
+    check()
+    assert daemon.registered and daemon.manager.registered == [gb.SPP_NEW]
+
+
 def test_registration_keeps_retrying_while_bluez_is_away():
     daemon = restartable_daemon()
     daemon.manager = FakeManager(fail=True)

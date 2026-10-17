@@ -915,6 +915,9 @@ class Daemon:
         self.device_path = None
         self.connecting = False
         self.registered = False
+        # Counts successful registrations, so a deferred check can tell
+        # whether the profile it was about is still the one BlueZ holds.
+        self.registration = 0
         self.default_address = ""
         self.codec_card = ""
         # The preset last asked for, until the earbuds ack it.
@@ -1070,14 +1073,14 @@ class Daemon:
     def on_connect_reply(self):
         self.connecting = False
         if not self.socket:
-            self.schedule(STALE_LINK_MS, self.check_stale_link)
+            self.schedule_stale_link_check()
 
     def on_connect_error(self, error):
         self.connecting = False
         if self.socket:
             return
         if "AlreadyConnected" in str(error):
-            self.schedule(STALE_LINK_MS, self.check_stale_link)
+            self.schedule_stale_link_check()
             return
         if any(marker in str(error) for marker in PROFILE_GONE_ERRORS):
             # BlueZ no longer knows our profile (it restarted under us), so
@@ -1085,13 +1088,17 @@ class Daemon:
             self.registered = False
         self.update({"connected": False, "reason": "connect failed"})
 
-    def check_stale_link(self):
+    def schedule_stale_link_check(self):
+        registration = self.registration
+        self.schedule(STALE_LINK_MS, lambda: self.check_stale_link(registration))
+
+    def check_stale_link(self, registration):
         """BlueZ says our profile is connected, but no socket ever reached us.
         It keeps its own copy of every link it hands over, so one we lost
         (seen after bluetoothd crashed mid-connect) stays "connected" there and
         every ConnectProfile succeeds without a NewConnection. Registering again
         makes BlueZ close that copy, and the next connect tick gets a fresh one."""
-        if not self.socket and self.registered:
+        if not self.socket and self.registered and registration == self.registration:
             self.registered = False
             self.update({"connected": False, "reason": "connect failed"})
         return False
@@ -1836,6 +1843,7 @@ class Daemon:
                                          {"Role": "client", "Service": uuid,
                                           "Name": "omarchy-galaxy-buds"})
             self.registered = True
+            self.registration += 1
         except dbus.DBusException:
             # Also covers a proxy left pointing at a bluetoothd that is gone.
             self.refresh_manager()
