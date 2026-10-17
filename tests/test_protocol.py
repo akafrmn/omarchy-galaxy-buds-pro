@@ -1268,6 +1268,16 @@ def test_socket_that_arrives_keeps_the_registration():
     assert not daemon.scheduled, "a live link needs no check"
 
 
+def test_socket_that_came_and_went_keeps_the_registration():
+    daemon = stale_link_daemon()
+    daemon.on_connect_reply()
+    daemon.link_up(FakeSocket())
+    daemon.disconnect()                 # dropped again within the grace
+    _, check = daemon.scheduled.pop()
+    check()
+    assert daemon.registered, "the profile delivered a socket, so it is not stale"
+
+
 def test_stale_link_check_spares_a_newer_registration():
     # bluetoothd restarted during the grace: the check was about the old
     # profile and must leave the new registration alone.

@@ -11,8 +11,9 @@ All notable changes to this project are documented here. The format follows
   connecting. BlueZ kept counting a control link the helper no longer held, so every connect
   attempt "succeeded" without handing the helper a socket, and only restarting the shell got the
   earbuds back. When a connect succeeds (or reports already connected) and no socket arrives
-  within 3 s, the helper now registers its profile again, which makes BlueZ drop that stale link,
-  and the next attempt connects
+  within 3 s, the helper now marks its profile unregistered; the next registration tick (every
+  5 s) unregisters and registers it again, which makes BlueZ drop that stale link, and the next
+  attempt connects
   ([#9](https://github.com/akafrmn/omarchy-galaxy-buds-pro/issues/9)).
 
 ## [2.6.1] - 2026-10-16

@@ -918,6 +918,7 @@ class Daemon:
         # Counts successful registrations, so a deferred check can tell
         # whether the profile it was about is still the one BlueZ holds.
         self.registration = 0
+        self.links = 0                  # sockets handed over so far
         self.default_address = ""
         self.codec_card = ""
         # The preset last asked for, until the earbuds ack it.
@@ -1089,16 +1090,18 @@ class Daemon:
         self.update({"connected": False, "reason": "connect failed"})
 
     def schedule_stale_link_check(self):
-        registration = self.registration
-        self.schedule(STALE_LINK_MS, lambda: self.check_stale_link(registration))
+        attempt = (self.registration, self.links)
+        self.schedule(STALE_LINK_MS, lambda: self.check_stale_link(attempt))
 
-    def check_stale_link(self, registration):
+    def check_stale_link(self, attempt):
         """BlueZ says our profile is connected, but no socket ever reached us.
         It keeps its own copy of every link it hands over, so one we lost
         (seen after bluetoothd crashed mid-connect) stays "connected" there and
         every ConnectProfile succeeds without a NewConnection. Registering again
         makes BlueZ close that copy, and the next connect tick gets a fresh one."""
-        if not self.socket and self.registered and registration == self.registration:
+        # A socket that came and went meanwhile was a working link, and a new
+        # registration is not the one the check was about: leave both alone.
+        if not self.socket and self.registered and attempt == (self.registration, self.links):
             self.registered = False
             self.update({"connected": False, "reason": "connect failed"})
         return False
@@ -1123,6 +1126,7 @@ class Daemon:
 
     def link_up(self, sock):
         self.socket = sock
+        self.links += 1
         self.buffer = b""
         self.connecting = False
         # Where the buds sit is only known from this link's own status
