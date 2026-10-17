@@ -71,6 +71,9 @@ FLAG_FRAGMENT = 0x2000
 
 # ConnectProfile errors meaning BlueZ has no registration of ours any more.
 PROFILE_GONE_ERRORS = ("profile-unavailable", "InvalidArguments", "ServiceUnknown", "UnknownObject")
+# How long a ConnectProfile that "worked" may go without handing us the socket
+# before BlueZ's idea of the link counts as stale.
+STALE_LINK_MS = 3000
 
 MODES = {"off": 0, "anc": 1, "ambient": 2}
 MODE_NAMES = {v: k for k, v in MODES.items()}
@@ -1066,16 +1069,32 @@ class Daemon:
 
     def on_connect_reply(self):
         self.connecting = False
+        if not self.socket:
+            self.schedule(STALE_LINK_MS, self.check_stale_link)
 
     def on_connect_error(self, error):
         self.connecting = False
-        if "AlreadyConnected" in str(error) or self.socket:
+        if self.socket:
+            return
+        if "AlreadyConnected" in str(error):
+            self.schedule(STALE_LINK_MS, self.check_stale_link)
             return
         if any(marker in str(error) for marker in PROFILE_GONE_ERRORS):
             # BlueZ no longer knows our profile (it restarted under us), so
             # the next register tick has to hand it over again.
             self.registered = False
         self.update({"connected": False, "reason": "connect failed"})
+
+    def check_stale_link(self):
+        """BlueZ says our profile is connected, but no socket ever reached us.
+        It keeps its own copy of every link it hands over, so one we lost
+        (seen after bluetoothd crashed mid-connect) stays "connected" there and
+        every ConnectProfile succeeds without a NewConnection. Registering again
+        makes BlueZ close that copy, and the next connect tick gets a fresh one."""
+        if not self.socket and self.registered:
+            self.registered = False
+            self.update({"connected": False, "reason": "connect failed"})
+        return False
 
     def on_bluez_owner_changed(self, name, old_owner, new_owner):
         """bluetoothd restarted or went away. A new instance has none of our
