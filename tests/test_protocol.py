@@ -1225,6 +1225,71 @@ def test_unknown_profile_on_connect_registers_again():
     assert daemon.registered and daemon.manager.registered == [gb.SPP_NEW]
 
 
+def stale_link_daemon():
+    daemon = restartable_daemon()
+    daemon.registered = True
+    daemon.scheduled = []
+    daemon.schedule = lambda ms, job: daemon.scheduled.append((ms, job))
+    return daemon
+
+
+def test_connect_without_a_socket_registers_again():
+    # After a bluetoothd crash mid-connect, BlueZ kept counting a link we no
+    # longer held: every ConnectProfile succeeded and no NewConnection came.
+    daemon = stale_link_daemon()
+    daemon.connecting = True
+    daemon.on_connect_reply()
+    assert [ms for ms, _ in daemon.scheduled] == [gb.STALE_LINK_MS], "a late socket gets a moment"
+    assert daemon.registered
+    _, check = daemon.scheduled.pop()
+    assert check() is False, "a one-shot timer"
+    assert not daemon.registered and daemon.state["reason"] == "connect failed"
+    daemon.register_profile()
+    assert daemon.registered and daemon.manager.registered == [gb.SPP_NEW]
+
+
+def test_already_connected_without_a_socket_registers_again():
+    daemon = stale_link_daemon()
+    daemon.on_connect_error(Exception("org.bluez.Error.AlreadyConnected: Already Connected"))
+    _, check = daemon.scheduled.pop()
+    check()
+    assert not daemon.registered
+
+
+def test_socket_that_arrives_keeps_the_registration():
+    daemon = stale_link_daemon()
+    daemon.on_connect_reply()
+    daemon.link_up(FakeSocket())        # NewConnection came in during the grace
+    _, check = daemon.scheduled.pop()
+    check()
+    assert daemon.registered and daemon.state["connected"] is True
+    daemon.on_connect_reply()
+    daemon.on_connect_error(Exception("org.bluez.Error.AlreadyConnected"))
+    assert not daemon.scheduled, "a live link needs no check"
+
+
+def test_socket_that_came_and_went_keeps_the_registration():
+    daemon = stale_link_daemon()
+    daemon.on_connect_reply()
+    daemon.link_up(FakeSocket())
+    daemon.disconnect()                 # dropped again within the grace
+    _, check = daemon.scheduled.pop()
+    check()
+    assert daemon.registered, "the profile delivered a socket, so it is not stale"
+
+
+def test_stale_link_check_spares_a_newer_registration():
+    # bluetoothd restarted during the grace: the check was about the old
+    # profile and must leave the new registration alone.
+    daemon = stale_link_daemon()
+    daemon.on_connect_reply()
+    daemon.on_bluez_owner_changed("org.bluez", ":1.5", ":1.409")
+    assert daemon.registered
+    _, check = daemon.scheduled.pop()
+    check()
+    assert daemon.registered and daemon.manager.registered == [gb.SPP_NEW]
+
+
 def test_registration_keeps_retrying_while_bluez_is_away():
     daemon = restartable_daemon()
     daemon.manager = FakeManager(fail=True)

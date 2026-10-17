@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.6.2] - 2026-10-17
+
+### Fixed
+- The panel no longer stays on "Disconnected" after bluetoothd crashes while the earbuds are
+  connecting. BlueZ kept counting a control link the helper no longer held, so every connect
+  attempt "succeeded" without handing the helper a socket, and only restarting the shell got the
+  earbuds back. When a connect succeeds (or reports already connected) and no socket arrives
+  within 3 s, the helper now marks its profile unregistered; the next registration tick (every
+  5 s) unregisters and registers it again, which makes BlueZ drop that stale link, and the next
+  attempt connects
+  ([#9](https://github.com/akafrmn/omarchy-galaxy-buds-pro/issues/9)).
+
 ## [2.6.1] - 2026-10-16
 
 ### Security
@@ -199,6 +211,7 @@ First release as `io.github.akafrmn.galaxy-buds-pro`, based on
 - Plugin id is now `io.github.akafrmn.galaxy-buds-pro`. Remove `aislandener.galaxy-buds` before
   installing: only one program can hold the earbuds' control link.
 
+[2.6.2]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.6.2
 [2.6.1]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.6.1
 [2.6.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.6.0
 [2.5.0]: https://github.com/akafrmn/omarchy-galaxy-buds-pro/releases/tag/v2.5.0
