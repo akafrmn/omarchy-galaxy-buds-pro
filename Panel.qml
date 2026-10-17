@@ -669,6 +669,7 @@ Panel {
           implicitHeight: Math.max(heroIcon.implicitHeight, heroName.implicitHeight)
 
           Text {
+            textFormat: Text.PlainText
             id: heroIcon
             text: root.modeIcon()
             color: root.foreground
@@ -687,6 +688,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
+              textFormat: Text.PlainText
               id: heroName
               text: root.deviceName
               color: root.foreground
@@ -698,6 +700,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               // Worth saying out loud: with two pairs connected it is easy to
               // change the mode on the one you are not listening to.
               visible: root.connected && !root.isAudioOutput
@@ -726,6 +729,7 @@ Panel {
               height: Style.space(16)
 
               Text {
+                textFormat: Text.PlainText
                 id: cellLabel
                 text: modelData.label
                 color: root.dim
@@ -758,6 +762,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 id: cellValue
                 // The bolt reads as "this number is going up", which is the
                 // whole point of showing it while an earbud sits in the case.
@@ -810,6 +815,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           visible: root.connected && root.hasModes && root.ancNeedsBothBuds
           text: root.t("ancOneBud", "ANC needs both earbuds in. Galaxy Wearable can allow it with one.")
@@ -837,6 +843,7 @@ Panel {
             height: Math.max(rowLabel.implicitHeight, rowSwitch.implicitHeight)
 
             Text {
+              textFormat: Text.PlainText
               id: rowLabel
               text: modelData.label
               color: root.foreground
@@ -1019,6 +1026,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             visible: !root.findActive
             text: root.t("findWarning", "Plays a loud sound. Take them out of your ears.")
@@ -1029,6 +1037,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             visible: root.findActive
             text: root.t("findAutoStop", "Stops by itself in %1 s").replace("%1", root.findRemaining)
@@ -1041,6 +1050,7 @@ Panel {
             model: root.findNotes
 
             Text {
+              textFormat: Text.PlainText
               required property var modelData
               width: panelColumn.width
               text: modelData
@@ -1052,6 +1062,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             visible: text !== ""
             text: root.findState && root.findState.reason ? root.findReasonText(root.findState.reason) : ""
@@ -1069,6 +1080,7 @@ Panel {
           visible: root.connected && root.firmwareBuild !== null
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: root.firmwareBuild
                   ? root.t("firmware", "Firmware") + "  ·  " + root.firmwareBuild.build + " (" + root.firmwareBuild.label + ")"
@@ -1087,6 +1099,7 @@ Panel {
             height: Math.max(firmwareStatus.implicitHeight, inlineVersion.implicitHeight)
 
             Text {
+              textFormat: Text.PlainText
               id: firmwareStatus
               anchors.left: parent.left
               anchors.top: parent.top
@@ -1099,6 +1112,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               id: inlineVersion
               anchors.right: parent.right
               anchors.top: parent.top
@@ -1118,6 +1132,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             visible: root.firmwareUpdate !== null && root.install === null
             text: root.firmwareUpdate
@@ -1131,6 +1146,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             visible: root.firmware.mismatch === true
             text: root.t("firmwareMismatch", "Left and right run different firmware; updates can fail until they match.")
@@ -1141,6 +1157,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             visible: root.firmwareUpdate !== null && root.firmwareUpdate.installable !== true && !root.install
             text: root.t("fwNotReviewed", "This build is not reviewed for install here yet; Galaxy Wearable can install it.")
@@ -1169,6 +1186,7 @@ Panel {
                      && root.firmwareUpdate.installable === true && !root.install
 
             Text {
+              textFormat: Text.PlainText
               width: parent.width
               text: root.t("fwConfirm",
                     "Install " + (root.firmwareUpdate ? root.firmwareUpdate.build : "") + " on both earbuds? "
@@ -1214,6 +1232,7 @@ Panel {
           visible: root.install !== null
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: root.installText()
             color: root.installStage === "failed" || root.installStage === "refused" ? root.urgent : root.foreground
@@ -1229,6 +1248,7 @@ Panel {
             Repeater {
               model: root.installSteps
               Text {
+                textFormat: Text.PlainText
                 required property var modelData
                 required property int index
                 text: (index < root.installStep ? "✓ " : index === root.installStep ? "● " : "○ ") + modelData
@@ -1282,6 +1302,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               id: installPercent
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
@@ -1295,6 +1316,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             visible: text !== ""
             text: root.installDetail()
@@ -1325,6 +1347,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           visible: !root.connected && !root.service
           text: root.t("serviceOff", "The plugin service is not running.")
@@ -1344,6 +1367,7 @@ Panel {
           spacing: Style.space(10)
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: root.searchText
             color: root.dim
@@ -1368,6 +1392,7 @@ Panel {
 
         // ---------- Plugin version, bottom right, when there is no firmware line to share ----------
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           visible: !root.versionInline && root.pluginVersion !== ""
           horizontalAlignment: Text.AlignRight
